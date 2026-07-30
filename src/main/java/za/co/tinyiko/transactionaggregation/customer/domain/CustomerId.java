@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * The identity of a {@link Customer}, per TDS §18.
+ * The identity of a {@link Customer}, per TDS 18.
  *
  * <p>Identity is generated here, via {@link #generate()}, rather than inside {@link Customer}'s
  * factory method — the aggregate is handed a fully-formed identity to construct with, it does

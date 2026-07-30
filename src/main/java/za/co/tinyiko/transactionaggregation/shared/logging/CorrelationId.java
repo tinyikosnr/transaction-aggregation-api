@@ -4,7 +4,7 @@ import java.util.Objects;
 
 /**
  * The identifier used to trace one request across controllers, services, logs, audit events
- * and error responses (SAD Part 5 §34.10, Part 6A §37).
+ * and error responses (SAD Part 5 34.10, Part 6A 37).
  *
  * <p>Held as an opaque, validated string rather than a {@code UUID} — the API accepts a
  * valid client-supplied correlation ID and only generates one (typically UUID-shaped) when

@@ -1140,13 +1140,13 @@ Expected claims:
 }
 ```
 
-At authentication time, each value in the JWT `roles` claim is expanded into its mapped set of Spring Security granted authorities (see §42) before any authorization check runs. Endpoint and method security (`@PreAuthorize`) evaluate authorities only — role names are never checked directly. See ADR-016 (SAD §49.1).
+At authentication time, each value in the JWT `roles` claim is expanded into its mapped set of Spring Security granted authorities (see 42) before any authorization check runs. Endpoint and method security (`@PreAuthorize`) evaluate authorities only — role names are never checked directly. See ADR-016 (SAD 49.1).
 
 ---
 
 ## 42. Roles and Authority Mapping
 
-Roles are named, coarse-grained collections of the fine-grained authorities defined in the SAD (§36.4: `TRANSACTION_READ`, `TRANSACTION_WRITE`, `CUSTOMER_READ`, `AGGREGATION_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ`). A role is what gets assigned to a client or user; an authority is what gets checked by `@PreAuthorize`. This mapping is the approved baseline from ADR-016.
+Roles are named, coarse-grained collections of the fine-grained authorities defined in the SAD (36.4: `TRANSACTION_READ`, `TRANSACTION_WRITE`, `CUSTOMER_READ`, `AGGREGATION_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ`). A role is what gets assigned to a client or user; an authority is what gets checked by `@PreAuthorize`. This mapping is the approved baseline from ADR-016.
 
 ### `ROLE_API_CONSUMER`
 
@@ -1205,7 +1205,7 @@ Effective permissions: all API consumer and support permissions, manage categori
 - JWT signature must be validated
 - Token expiry must be validated
 - Issuer and audience must be validated
-- JWT `roles` claims must be expanded into granted authorities using the approved mapping (§42, ADR-016) before any authorization decision is made
+- JWT `roles` claims must be expanded into granted authorities using the approved mapping (42, ADR-016) before any authorization decision is made
 - Unauthorized requests return `401`
 - Authenticated but forbidden requests return `403`
 - Sensitive fields must not appear in logs

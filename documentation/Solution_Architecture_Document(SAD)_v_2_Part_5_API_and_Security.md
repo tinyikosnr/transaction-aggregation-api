@@ -660,7 +660,7 @@ Example:
 @PreAuthorize("hasAuthority('TRANSACTION_WRITE')")
 ```
 
-These authorities are the unit of protection for individual operations and are never assigned to a client directly. Clients are instead assigned **roles** — named, coarser collections of these authorities, documented alongside the approved role-to-authority mapping in the Technical Design Specification (§42) and formalised in ADR-016 (§49.1). A JWT's `roles` claim is expanded into the mapped set of authorities at authentication time; `@PreAuthorize` always evaluates authorities, never role names.
+These authorities are the unit of protection for individual operations and are never assigned to a client directly. Clients are instead assigned **roles** — named, coarser collections of these authorities, documented alongside the approved role-to-authority mapping in the Technical Design Specification (42) and formalised in ADR-016 (49.1). A JWT's `roles` claim is expanded into the mapped set of authorities at authentication time; `@PreAuthorize` always evaluates authorities, never role names.
 
 ---
 

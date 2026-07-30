@@ -28,7 +28,7 @@ Architecture Decision Records capture significant technical decisions together w
 | ADR-013 | Immutable Transactions | Accepted | Preserves financial integrity and auditability. |
 | ADR-014 | Optimistic Locking | Accepted | Prevents lost updates with minimal locking overhead. |
 | ADR-015 | Future Microservice Evolution | Accepted | Enables gradual extraction of bounded contexts. |
-| ADR-016 | RBAC Role-to-Authority Mapping | Accepted | Roles are named collections of fine-grained authorities; endpoint and method security evaluate authorities only. Resolves the SAD/TDS role-versus-authority naming conflict — see §49.1. |
+| ADR-016 | RBAC Role-to-Authority Mapping | Accepted | Roles are named collections of fine-grained authorities; endpoint and method security evaluate authorities only. Resolves the SAD/TDS role-versus-authority naming conflict — see 49.1. |
 
 Decision lifecycle:
 
@@ -41,7 +41,7 @@ Decision lifecycle:
 
 ## 49.1 ADR-016 Detail — Roles, Authorities and the Approved Mapping
 
-**Context:** Part 5 of this document (§36.4) defines fine-grained authorities that protect individual operations, while the Technical Design Specification (§42) independently defines coarser roles assigned to clients. Neither document originally stated how the two relate, which was tracked as an unresolved documentation conflict.
+**Context:** Part 5 of this document (36.4) defines fine-grained authorities that protect individual operations, while the Technical Design Specification (42) independently defines coarser roles assigned to clients. Neither document originally stated how the two relate, which was tracked as an unresolved documentation conflict.
 
 **Decision:**
 
@@ -57,7 +57,7 @@ Decision lifecycle:
 | `ROLE_SUPPORT` | `TRANSACTION_READ`, `CUSTOMER_READ`, `AGGREGATION_READ` |
 | `ROLE_ADMIN` | `TRANSACTION_READ`, `TRANSACTION_WRITE`, `CUSTOMER_READ`, `AGGREGATION_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ` |
 
-**Consequences:** the TDS (§42) documents the role layer and its mapping to authorities; the SAD (§36.4) documents the authority layer; this ADR documents the relationship and the initial mapping between them. This mapping is the approved starting point for the Spring Security configuration, which is implemented separately and remains out of scope for this ADR.
+**Consequences:** the TDS (42) documents the role layer and its mapping to authorities; the SAD (36.4) documents the authority layer; this ADR documents the relationship and the initial mapping between them. This mapping is the approved starting point for the Spring Security configuration, which is implemented separately and remains out of scope for this ADR.
 
 **Status:** Accepted.
 

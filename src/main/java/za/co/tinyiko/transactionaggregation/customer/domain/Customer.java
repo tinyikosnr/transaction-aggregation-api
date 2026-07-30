@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * The Customer aggregate (SAD §27.1) — the owner of financial transactions.
+ * The Customer aggregate (SAD 27.1) — the owner of financial transactions.
  *
  * <p>A plain, mutable class rather than a record: {@code status} and {@code updatedAt}
  * genuinely change over the aggregate's life; every other field is set once at construction.

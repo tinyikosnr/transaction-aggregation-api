@@ -6,7 +6,7 @@ import java.util.UUID;
 
 /**
  * The common envelope every module's domain events are published in, exactly as specified in
- * the Technical Design Specification (Part 10, §45).
+ * the Technical Design Specification (Part 10, 45).
  *
  * <p>{@code payload} is deliberately unconstrained ({@code T}, not {@code T extends DomainEvent}
  * or similar) — this is a considered choice, not an oversight, to keep the envelope matching the
