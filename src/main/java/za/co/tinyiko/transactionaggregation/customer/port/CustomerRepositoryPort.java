@@ -6,7 +6,7 @@ import za.co.tinyiko.transactionaggregation.customer.domain.Customer;
 import za.co.tinyiko.transactionaggregation.customer.domain.CustomerId;
 
 /**
- * Outbound port the customer application layer uses to persist and read customers (TDS §60).
+ * Outbound port the customer application layer uses to persist and read customers (TDS 60).
  * Implemented by the JPA adapter in {@code customer.persistence}; the application layer never
  * depends on Spring Data types directly.
  */
