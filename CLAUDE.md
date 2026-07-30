@@ -35,7 +35,7 @@ This repository is in an early implementation phase. The SAD, accepted ADRs, and
 **Not yet dependencies — do not assume they exist without adding them first:**
 - `springdoc-openapi` (OpenAPI/Swagger UI is specified in the SAD but not yet in `pom.xml`).
 - Lombok (not currently used; if introduced, see [Coding Rules](#coding-rules) — never on JPA entities).
-- ArchUnit as a project dependency — not declared directly, though `com.tngtech.archunit:archunit` is present transitively (runtime scope, pulled in by `spring-modulith-runtime`, which uses it internally). Do not write test code against that transitive copy — it's an implementation detail of Modulith, not a stable API for this project to depend on. Module-boundary enforcement currently relies entirely on Spring Modulith's own `ApplicationModules.of(...).verify()`, which covers cross-module boundaries but not intra-module layering. The one documented rule it can't express — that `domain` packages must not depend on Spring, Jakarta Persistence, or presentation types — is deliberately unenforced for now: no `domain` package contains a class yet, so there is nothing to check. Revisit (with an explicitly declared `archunit-junit5` test dependency, not the transitive one) once the first domain model is implemented, rather than adding it against an empty package.
+- ArchUnit as a project dependency — not declared directly, though `com.tngtech.archunit:archunit` is present transitively (runtime scope, pulled in by `spring-modulith-runtime`, which uses it internally). Do not write test code against that transitive copy — it's an implementation detail of Modulith, not a stable API for this project to depend on. Module-boundary enforcement currently relies entirely on Spring Modulith's own `ApplicationModules.of(...).verify()`, which covers cross-module boundaries but not intra-module layering (whether a class references Spring/Jakarta Persistence types). For `shared`'s two types, that gap is covered instead by a small hand-rolled reflection check (`SharedFrameworkIndependenceTests`, under the `architecture` test package) — proportionate while the list of framework-neutral shared types is short and simple. No `domain` package contains a class yet, so that broader rule is still unenforced. Revisit ArchUnit (with an explicitly declared `archunit-junit5` test dependency, not the transitive one) if the hand-rolled approach stops scaling — e.g. once the first real `domain` model exists, or `shared`'s type count grows enough that per-type reflection checks become unwieldy.
 
 ## Commands
 
@@ -98,14 +98,18 @@ za.co.tinyiko.transactionaggregation
 │   ├── domain / application / port / persistence
 ├── security                  # JWT validation, role/authority extraction, access-denied handling
 ├── config                     # cross-cutting Spring configuration (Jackson, JPA, clock, correlation ID filter, OpenAPI)
-└── shared                     # reusable technical building blocks only — exceptions, utilities, event envelope
+└── shared                     # reusable technical building blocks only
+    ├── event                   # DomainEventEnvelope<T> — the common event wire format (TDS §45)
+    └── logging                 # CorrelationId — request-tracing value object (SAD §34.10, §37)
 ```
+
+`shared` deliberately does not (yet) have an exception hierarchy or a `util` package — see [Module Boundaries and Dependency Rules](#module-boundaries-and-dependency-rules) for why.
 
 Controllers live in the shared top-level `api` package (thin, no business logic) and call into each module's `application` use-case interfaces — the `api` layer must never depend on a module's `domain`, `port`, or `persistence` types directly, only its `application`-layer interfaces.
 
 ### Module Boundaries and Dependency Rules
 
-- `shared` contains only reusable, business-rule-free abstractions (exception hierarchy, event envelope, utilities). Every module may depend on it; it depends on nothing else in the codebase.
+- `shared` contains only reusable, business-rule-free abstractions. Every module may depend on it; it depends on nothing else in the codebase. It currently holds `DomainEventEnvelope<T>` (`shared.event`) and `CorrelationId` (`shared.logging`) — both added in `feature/shared` because they're already needed by multiple already-specified future modules (TDS §45's event catalogue spans 2 modules; correlation IDs flow through every request, audit event, and error response). A shared exception hierarchy, `shared.validation`, `shared.util`, `DomainEventPublisher`, and `ClockProvider`/`CurrentUserProvider` were deliberately **not** built: each would currently have zero consumers — nothing yet throws, catches, publishes, or reads them — so building them now would be preparing for modules that don't exist rather than solving a known problem. `java.time.Clock` is used directly instead of a custom `ClockProvider`, since it already provides everything a wrapper would, with none of the drawbacks. Add any of these deferred items only when the first real consumer needs it, not preemptively.
 - Allowed module dependency directions: `transaction → categorisation`, `transaction → audit`, `transaction → merchant`, `aggregation → transaction` (read-only), `aggregation → customer` (read-only). Do not introduce a dependency running the other way, and never a cycle.
 - A module may **never** access another module's JPA repository or persistence package directly. Cross-module reads/writes go through the target module's `application` use-case interfaces or `port` query interfaces; asynchronous reactions go through domain events.
 - Controllers never depend on repositories, only on `application` use-case interfaces.
@@ -159,7 +163,7 @@ Within each module, `port` defines outbound interfaces the domain/application la
 | DTO-level validation | Jakarta Bean Validation annotations on `api.request` types |
 | Business-invariant validation | Inside `<module>.domain` (constructors/factory methods enforcing invariants) and `<module>.application` (use-case-level checks) — validation is layered, not just done once at the API boundary |
 | Mapper | `<module>.mapper` (e.g. an API mapper between `api` DTOs and `application` types, and a persistence mapper between domain and JPA entities) |
-| Domain event | `<module>.event`, published through the `DomainEventPublisher` port |
+| Domain event | The event type itself in `<module>.event`, wrapped in `shared.event`'s `DomainEventEnvelope<T>` for publication. There is no `DomainEventPublisher` port yet — it's deferred until the first module actually publishes something; that module's branch should introduce it in `shared.event` rather than inventing a module-local one. |
 
 ## Development Principles
 
