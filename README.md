@@ -74,7 +74,7 @@ See [`Solution_Architecture_Document(SAD)_v_2_Part_6B_Governance_and_Reference.m
 
 ## Planned Capabilities
 
-None of the capabilities below exist in source code yet — the repository currently contains only the generated Spring Boot application entry point and generated test scaffolding (see [Project Structure](#project-structure)). These capabilities are **approved in the SAD and TDS** and will be implemented incrementally, one bounded context at a time, following the order in [Development Workflow](#development-workflow). This list will be updated to reflect what's actually implemented as each feature branch lands.
+None of the capabilities below exist in source code yet — the repository currently contains only the generated Spring Boot application entry point, the empty top-level module package skeleton, and test/architecture-verification scaffolding (see [Project Structure](#project-structure)). No business logic, entities, controllers, repositories or migrations exist. These capabilities are **approved in the SAD and TDS** and will be implemented incrementally, one bounded context at a time, following the order in [Development Workflow](#development-workflow). This list will be updated to reflect what's actually implemented as each feature branch lands.
 
 - Single and bulk transaction ingestion, with per-item partial success on bulk requests.
 - Strict request validation and business-invariant validation (amount, currency, timestamps, identifiers).
@@ -97,16 +97,20 @@ Current repository layout:
 ```
 transaction-aggregation-api
 ├── documentation/                 Architecture and design documents (source of truth)
-├── src/main/java/.../             Application entry point (za.co.tinyiko.transactionaggregation)
-├── src/main/resources/            application.properties
-├── src/test/java/.../             Test bootstrap and Testcontainers configuration
+├── src/main/java/.../             Application entry point + the 10 top-level module packages
+│                                   (api, transaction, categorisation, aggregation, customer,
+│                                    merchant, audit, security, config, shared) — package
+│                                   skeleton only, no business code yet
+├── src/main/resources/            application.properties, db/migration (empty)
+├── src/test/java/.../             Test bootstrap, Testcontainers configuration, and
+│                                   architecture verification tests (Spring Modulith)
 ├── compose.yaml                   Local PostgreSQL for development/tests
 ├── pom.xml
 ├── mvnw / mvnw.cmd
 └── HELP.md                        Spring Initializr reference notes
 ```
 
-The full target package layout (module-per-package, with a shared top-level `api` layer) is defined in the Technical Design Specification and is the structure new code should follow: [Technical Design Specification, Part 1](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#part-1--project-structure-and-package-design).
+Each module's internal layering (`domain`, `application`, `port`, `persistence`, etc.) is documented in [`CLAUDE.md`](CLAUDE.md#package-responsibilities) and is created incrementally as each module's feature branch adds real code — see [Development Workflow](#development-workflow). The full target package layout is defined in the Technical Design Specification: [Technical Design Specification, Part 1](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#part-1--project-structure-and-package-design).
 
 ## Module Overview
 

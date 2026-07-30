@@ -35,7 +35,7 @@ This repository is in an early implementation phase. The SAD, accepted ADRs, and
 **Not yet dependencies — do not assume they exist without adding them first:**
 - `springdoc-openapi` (OpenAPI/Swagger UI is specified in the SAD but not yet in `pom.xml`).
 - Lombok (not currently used; if introduced, see [Coding Rules](#coding-rules) — never on JPA entities).
-- ArchUnit (module-boundary enforcement currently relies on Spring Modulith's own `ApplicationModules.of(...).verify()`; add ArchUnit only if a rule can't be expressed through Modulith).
+- ArchUnit as a project dependency — not declared directly, though `com.tngtech.archunit:archunit` is present transitively (runtime scope, pulled in by `spring-modulith-runtime`, which uses it internally). Do not write test code against that transitive copy — it's an implementation detail of Modulith, not a stable API for this project to depend on. Module-boundary enforcement currently relies entirely on Spring Modulith's own `ApplicationModules.of(...).verify()`, which covers cross-module boundaries but not intra-module layering. The one documented rule it can't express — that `domain` packages must not depend on Spring, Jakarta Persistence, or presentation types — is deliberately unenforced for now: no `domain` package contains a class yet, so there is nothing to check. Revisit (with an explicitly declared `archunit-junit5` test dependency, not the transitive one) once the first domain model is implemented, rather than adding it against an empty package.
 
 ## Commands
 
@@ -69,7 +69,7 @@ The **domain layer must never depend on Spring, Jakarta EE, or any persistence/f
 
 ### Package Responsibilities
 
-Base package: `za.co.tinyiko.transactionaggregation`. Target structure (from the Technical Design Specification):
+Base package: `za.co.tinyiko.transactionaggregation`. The 10 top-level module packages listed below already exist (`feature/project-structure`) as an empty skeleton: each has a `package-info.java` documenting its responsibility, and `shared` carries an explicit Spring Modulith `@ApplicationModule` declaration (see [Module Boundaries and Dependency Rules](#module-boundaries-and-dependency-rules)). The internal per-module layering shown below (`domain`, `application`, `port`, etc.) is the target structure from the Technical Design Specification and does not exist as physical packages yet — it is created incrementally, only as each module's feature branch adds real code to it.
 
 ```
 za.co.tinyiko.transactionaggregation
@@ -101,7 +101,7 @@ za.co.tinyiko.transactionaggregation
 └── shared                     # reusable technical building blocks only — exceptions, utilities, event envelope
 ```
 
-Controllers live in the shared top-level `api` package (thin, no business logic) and call into each module's `application` use-case interfaces — they never call a module's `port`/`persistence` types directly.
+Controllers live in the shared top-level `api` package (thin, no business logic) and call into each module's `application` use-case interfaces — the `api` layer must never depend on a module's `domain`, `port`, or `persistence` types directly, only its `application`-layer interfaces.
 
 ### Module Boundaries and Dependency Rules
 
@@ -111,7 +111,8 @@ Controllers live in the shared top-level `api` package (thin, no business logic)
 - Controllers never depend on repositories, only on `application` use-case interfaces.
 - Persistence entities are never returned from a controller or crossed a module boundary — map to/from DTOs and domain types at the edges.
 - The `aggregation` module owns no persistent tables and must not write transaction data; it composes summaries by reading through `transaction`'s query port.
-- These rules should be enforced as executable tests using Spring Modulith (`ApplicationModules.of(TransactionAggregationApiApplication.class).verify()`), not left as documentation-only conventions. Treat a failing module-verification test the same as a failing compile.
+- These rules should be enforced as executable tests using Spring Modulith (`ApplicationModules.of(TransactionAggregationApiApplication.class).verify()`, in `ModularityTests` under the `architecture` test package), not left as documentation-only conventions. Treat a failing module-verification test the same as a failing compile.
+- Modules are recognised by Spring Modulith's default package-based convention alone — a bare `package-info.java` is enough, no annotation required. `verify()`'s built-in encapsulation of nested (non-root) packages already enforces "no direct cross-module persistence access" and "controllers cannot depend on repositories" with zero extra configuration. Add an explicit `@ApplicationModule` annotation only where a rule genuinely cannot be expressed any other way: currently only `shared` carries one (`type = OPEN, allowedDependencies = {}`), because "shared may not depend on business modules" has no other enforcement mechanism. Do not add annotations to other modules "for documentation" — the package-info Javadoc already documents intent, and an annotation should only appear when it changes verified behaviour.
 
 ### Aggregate Ownership
 
@@ -144,7 +145,7 @@ Within each module, `port` defines outbound interfaces the domain/application la
 3. Define outbound ports as interfaces before writing the JPA adapter that implements them.
 4. Add the module to the dependency diagram and ownership matrix in the SAD, and get the dependency direction agreed before writing code — this is not a mechanical step, it changes the architecture.
 5. Add a Flyway migration for any new tables, following the `V{n}__description.sql` convention.
-6. Add or extend the Spring Modulith verification test to cover the new module's allowed dependencies.
+6. Add or extend `ModularityTests` (under the `architecture` test package) to cover the new module's allowed dependencies.
 7. Follow the [Implementation Rules](#implementation-rules) — implement it as its own `feature/<module>` slice, independently compilable.
 
 ### Where New Things Belong
@@ -219,7 +220,7 @@ Prefer, in this order of value for this codebase:
 2. **Repository tests** against a real PostgreSQL via Testcontainers — never mock the database for persistence-layer tests.
 3. **Integration tests** that exercise a use case end-to-end within the Spring context.
 4. **Controller tests** for request validation, status codes, and error-response shape.
-5. **Architecture tests** — Spring Modulith's `ApplicationModules.verify()` — to make module boundary violations a build failure, not a review comment.
+5. **Architecture tests** — Spring Modulith's `ApplicationModules.verify()`, in `ModularityTests` under the `architecture` test package — to make module boundary violations a build failure, not a review comment.
 
 Every new feature needs, at minimum: the happy path, each documented validation failure, and each documented error-code scenario for that endpoint/use case.
 
