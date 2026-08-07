@@ -44,10 +44,10 @@ class CategorisationServiceTests {
 		when(categorisationRuleRepositoryPort.findAllActive()).thenReturn(List.of(rule));
 
 		CategorisationService service = new CategorisationService(categorisationRuleRepositoryPort, categoryRepositoryPort);
-		CategorisationDecision decision = service.categorise(new CategorisationInput("Shell Garage", "fuel purchase", Direction.DEBIT));
+		CategorisationDecision decision = service.categorise(new CategorisationInput("Shell Garage", "fuel purchase", "DEBIT"));
 
-		assertThat(decision.categoryId()).isEqualTo(categoryId);
-		assertThat(decision.matchedRuleId()).isEqualTo(rule.id());
+		assertThat(decision.categoryId()).isEqualTo(categoryId.value());
+		assertThat(decision.matchedRuleId()).isEqualTo(rule.id().value());
 		assertThat(decision.reason()).contains("MERCHANT", "CONTAINS", "SHELL");
 	}
 
@@ -59,9 +59,9 @@ class CategorisationServiceTests {
 		when(categoryRepositoryPort.findFallback()).thenReturn(Optional.of(fallback));
 
 		CategorisationService service = new CategorisationService(categorisationRuleRepositoryPort, categoryRepositoryPort);
-		CategorisationDecision decision = service.categorise(new CategorisationInput(null, "unrecognised transaction", Direction.DEBIT));
+		CategorisationDecision decision = service.categorise(new CategorisationInput(null, "unrecognised transaction", "DEBIT"));
 
-		assertThat(decision.categoryId()).isEqualTo(fallbackId);
+		assertThat(decision.categoryId()).isEqualTo(fallbackId.value());
 		assertThat(decision.matchedRuleId()).isNull();
 		assertThat(decision.reason()).isEqualTo("No rule matched; assigned fallback category");
 	}
@@ -74,7 +74,7 @@ class CategorisationServiceTests {
 		CategorisationService service = new CategorisationService(categorisationRuleRepositoryPort, categoryRepositoryPort);
 
 		assertThatIllegalStateException()
-				.isThrownBy(() -> service.categorise(new CategorisationInput(null, "unrecognised transaction", Direction.DEBIT)));
+				.isThrownBy(() -> service.categorise(new CategorisationInput(null, "unrecognised transaction", "DEBIT")));
 	}
 
 }

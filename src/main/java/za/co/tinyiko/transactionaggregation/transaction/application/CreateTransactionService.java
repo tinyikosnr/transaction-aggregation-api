@@ -1,0 +1,226 @@
+package za.co.tinyiko.transactionaggregation.transaction.application;
+
+import java.time.Clock;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import tools.jackson.databind.ObjectMapper;
+
+import za.co.tinyiko.transactionaggregation.audit.application.RecordAuditEventCommand;
+import za.co.tinyiko.transactionaggregation.audit.application.RecordAuditEventUseCase;
+import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationDecision;
+import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationInput;
+import za.co.tinyiko.transactionaggregation.categorisation.application.CategoriseTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.customer.application.CustomerExistsPort;
+import za.co.tinyiko.transactionaggregation.merchant.application.MerchantResolutionPort;
+import za.co.tinyiko.transactionaggregation.merchant.application.MerchantResolutionResult;
+import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
+import za.co.tinyiko.transactionaggregation.transaction.domain.Money;
+import za.co.tinyiko.transactionaggregation.transaction.domain.Transaction;
+import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionDirection;
+import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionId;
+import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionSource;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionRepositoryPort;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSourceRepositoryPort;
+
+/**
+ * Orchestrates single-transaction ingestion (TDS 51): validate, resolve source, validate
+ * customer, detect duplicates, resolve merchant, categorise, persist, audit. One
+ * {@code @Transactional} boundary for the whole use case - none of these calls are
+ * external/network calls, they're all in-process calls to other Spring-managed services within
+ * this same modular monolith, so nothing here violates "no long-running/external calls inside a
+ * database transaction."
+ *
+ * <p>{@code correlationId} is a fresh random value generated per call, not a real propagated
+ * request correlation id - there is no request-scoped correlation-id infrastructure yet (no
+ * filter reads/generates {@code X-Correlation-ID}). {@code actor} is hardcoded to
+ * {@code "SYSTEM"} for the same reason - no security module exists yet to supply a JWT subject.
+ * Both are deliberate, flagged placeholders, not a silent pretence that these are solved.
+ */
+@Service
+class CreateTransactionService implements CreateTransactionUseCase {
+
+	private static final String AGGREGATE_TYPE = "TRANSACTION";
+	private static final String SYSTEM_ACTOR = "SYSTEM";
+
+	private final TransactionRepositoryPort transactionRepositoryPort;
+	private final TransactionSourceRepositoryPort transactionSourceRepositoryPort;
+	private final CustomerExistsPort customerExistsPort;
+	private final MerchantResolutionPort merchantResolutionPort;
+	private final CategoriseTransactionUseCase categoriseTransactionUseCase;
+	private final RecordAuditEventUseCase recordAuditEventUseCase;
+	private final Clock clock;
+	private final ObjectMapper objectMapper;
+
+	CreateTransactionService(
+			TransactionRepositoryPort transactionRepositoryPort,
+			TransactionSourceRepositoryPort transactionSourceRepositoryPort,
+			CustomerExistsPort customerExistsPort,
+			MerchantResolutionPort merchantResolutionPort,
+			CategoriseTransactionUseCase categoriseTransactionUseCase,
+			RecordAuditEventUseCase recordAuditEventUseCase,
+			Clock clock,
+			ObjectMapper objectMapper
+	) {
+		this.transactionRepositoryPort = transactionRepositoryPort;
+		this.transactionSourceRepositoryPort = transactionSourceRepositoryPort;
+		this.customerExistsPort = customerExistsPort;
+		this.merchantResolutionPort = merchantResolutionPort;
+		this.categoriseTransactionUseCase = categoriseTransactionUseCase;
+		this.recordAuditEventUseCase = recordAuditEventUseCase;
+		this.clock = clock;
+		this.objectMapper = objectMapper;
+	}
+
+	@Override
+	@Transactional
+	public Transaction create(CreateTransactionCommand command) {
+		TransactionId transactionId = TransactionId.generate();
+		CorrelationId correlationId = new CorrelationId(UUID.randomUUID().toString());
+
+		Money amount = buildMoney(command, transactionId, correlationId);
+		TransactionDirection direction = parseDirection(command, transactionId, correlationId);
+
+		TransactionSource source = resolveSource(command, transactionId, correlationId);
+		validateCustomer(command, transactionId, correlationId);
+		checkForDuplicate(command, source, transactionId, correlationId);
+
+		MerchantResolutionResult merchant = resolveMerchant(command);
+		CategorisationDecision decision = categorise(command, merchant, direction);
+
+		Transaction transaction = registerTransaction(command, transactionId, source, merchant, decision, amount, direction, correlationId);
+		Transaction saved = persist(transaction, source, command, correlationId);
+
+		recordSuccess(saved, decision, correlationId);
+		return saved;
+	}
+
+	private Money buildMoney(CreateTransactionCommand command, TransactionId transactionId, CorrelationId correlationId) {
+		try {
+			Money money = new Money(command.amount(), command.currency());
+			if (money.amount().signum() <= 0) {
+				throw new IllegalArgumentException("amount must be greater than zero");
+			}
+			return money;
+		} catch (IllegalArgumentException e) {
+			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, e.getMessage());
+			throw new TransactionValidationException(e.getMessage(), e);
+		}
+	}
+
+	private TransactionDirection parseDirection(CreateTransactionCommand command, TransactionId transactionId, CorrelationId correlationId) {
+		try {
+			return TransactionDirection.valueOf(command.direction());
+		} catch (IllegalArgumentException e) {
+			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, e.getMessage());
+			throw new TransactionValidationException("direction must be CREDIT or DEBIT", e);
+		}
+	}
+
+	private TransactionSource resolveSource(CreateTransactionCommand command, TransactionId transactionId, CorrelationId correlationId) {
+		Optional<TransactionSource> source = transactionSourceRepositoryPort.findByCode(command.sourceCode());
+		if (source.isEmpty() || !source.get().isActive()) {
+			recordFailure(transactionId, "TRANSACTION_SOURCE_NOT_FOUND", correlationId,
+					"source code: " + command.sourceCode());
+			throw new TransactionSourceNotFoundException(command.sourceCode());
+		}
+		return source.get();
+	}
+
+	private void validateCustomer(CreateTransactionCommand command, TransactionId transactionId, CorrelationId correlationId) {
+		if (!customerExistsPort.exists(command.customerId())) {
+			recordFailure(transactionId, "TRANSACTION_CUSTOMER_NOT_FOUND", correlationId,
+					"customer id: " + command.customerId());
+			throw new CustomerNotFoundException(command.customerId());
+		}
+	}
+
+	private void checkForDuplicate(CreateTransactionCommand command, TransactionSource source, TransactionId transactionId, CorrelationId correlationId) {
+		boolean exists = transactionRepositoryPort
+				.findBySourceIdAndExternalTransactionId(source.id(), command.externalTransactionId())
+				.isPresent();
+		if (exists) {
+			recordFailure(transactionId, "TRANSACTION_DUPLICATE_REJECTED", correlationId,
+					"source: " + command.sourceCode() + ", externalTransactionId: " + command.externalTransactionId());
+			throw new DuplicateTransactionException(source.id().value(), command.externalTransactionId());
+		}
+	}
+
+	private MerchantResolutionResult resolveMerchant(CreateTransactionCommand command) {
+		if (command.merchantName() == null || command.merchantName().isBlank()) {
+			return null;
+		}
+		return merchantResolutionPort.resolve(command.merchantName());
+	}
+
+	private CategorisationDecision categorise(CreateTransactionCommand command, MerchantResolutionResult merchant, TransactionDirection direction) {
+		String merchantText = merchant == null ? null : merchant.displayName();
+		CategorisationInput input = new CategorisationInput(merchantText, command.description(), direction.name());
+		return categoriseTransactionUseCase.categorise(input);
+	}
+
+	private Transaction registerTransaction(
+			CreateTransactionCommand command,
+			TransactionId transactionId,
+			TransactionSource source,
+			MerchantResolutionResult merchant,
+			CategorisationDecision decision,
+			Money amount,
+			TransactionDirection direction,
+			CorrelationId correlationId
+	) {
+		try {
+			return Transaction.register(
+					transactionId,
+					command.customerId(),
+					source.id(),
+					command.externalTransactionId(),
+					merchant == null ? null : merchant.merchantId(),
+					decision.categoryId(),
+					amount,
+					direction,
+					command.description(),
+					command.occurredAt(),
+					clock);
+		} catch (IllegalArgumentException e) {
+			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, e.getMessage());
+			throw new TransactionValidationException(e.getMessage(), e);
+		}
+	}
+
+	private Transaction persist(Transaction transaction, TransactionSource source, CreateTransactionCommand command, CorrelationId correlationId) {
+		try {
+			return transactionRepositoryPort.save(transaction);
+		} catch (DuplicateTransactionException e) {
+			recordFailure(transaction.id(), "TRANSACTION_DUPLICATE_REJECTED", correlationId,
+					"source: " + source.code() + ", externalTransactionId: " + command.externalTransactionId());
+			throw e;
+		}
+	}
+
+	private void recordSuccess(Transaction transaction, CategorisationDecision decision, CorrelationId correlationId) {
+		Map<String, Object> eventData = new HashMap<>();
+		eventData.put("categoryId", decision.categoryId().toString());
+		eventData.put("matchedRuleId", decision.matchedRuleId() == null ? null : decision.matchedRuleId().toString());
+		eventData.put("reason", decision.reason());
+		recordAuditEventUseCase.record(new RecordAuditEventCommand(
+				AGGREGATE_TYPE, transaction.id().value(), "TRANSACTION_CREATED", SYSTEM_ACTOR, correlationId, toJson(eventData)));
+	}
+
+	private void recordFailure(TransactionId transactionId, String eventType, CorrelationId correlationId, String reason) {
+		Map<String, Object> eventData = new HashMap<>();
+		eventData.put("reason", reason);
+		recordAuditEventUseCase.record(new RecordAuditEventCommand(
+				AGGREGATE_TYPE, transactionId.value(), eventType, SYSTEM_ACTOR, correlationId, toJson(eventData)));
+	}
+
+	private String toJson(Map<String, Object> data) {
+		return objectMapper.writeValueAsString(data);
+	}
+
+}

@@ -3,6 +3,8 @@ package za.co.tinyiko.transactionaggregation.audit.application;
 import java.time.Clock;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import za.co.tinyiko.transactionaggregation.audit.domain.AuditEvent;
 import za.co.tinyiko.transactionaggregation.audit.domain.AuditEventId;
@@ -19,8 +21,16 @@ class AuditService implements RecordAuditEventUseCase {
 		this.clock = clock;
 	}
 
+	/**
+	 * Always runs in its own, independent transaction: an audit record must survive even when
+	 * the operation it describes fails and rolls back its own transaction (e.g. a rejected
+	 * transaction's "duplicate rejected" audit event must not disappear along with the rollback
+	 * of the rejected attempt). The standard justification for {@code REQUIRES_NEW} in audit
+	 * logging generally, not specific to any one caller.
+	 */
 	@Override
-	public AuditEvent record(RecordAuditEventCommand command) {
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public void record(RecordAuditEventCommand command) {
 		AuditEvent auditEvent = AuditEvent.register(
 				AuditEventId.generate(),
 				command.aggregateType(),
@@ -31,7 +41,7 @@ class AuditService implements RecordAuditEventUseCase {
 				command.eventData(),
 				clock);
 
-		return auditRepositoryPort.save(auditEvent);
+		auditRepositoryPort.save(auditEvent);
 	}
 
 }

@@ -1,5 +1,7 @@
 package za.co.tinyiko.transactionaggregation.customer.application;
 
+import java.util.UUID;
+
 import org.springframework.stereotype.Service;
 
 import za.co.tinyiko.transactionaggregation.customer.domain.Customer;
@@ -22,8 +24,8 @@ class CustomerLookupService implements CustomerLookupPort, CustomerExistsPort {
 	}
 
 	@Override
-	public boolean exists(CustomerId customerId) {
-		return customerRepositoryPort.existsById(customerId);
+	public boolean exists(UUID customerId) {
+		return customerRepositoryPort.existsById(new CustomerId(customerId));
 	}
 
 }

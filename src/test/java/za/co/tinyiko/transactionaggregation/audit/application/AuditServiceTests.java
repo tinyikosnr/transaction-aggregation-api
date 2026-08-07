@@ -16,9 +16,8 @@ import za.co.tinyiko.transactionaggregation.audit.port.AuditRepositoryPort;
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AuditServiceTests {
@@ -34,11 +33,13 @@ class AuditServiceTests {
 		UUID aggregateId = UUID.randomUUID();
 		RecordAuditEventCommand command = new RecordAuditEventCommand(
 				"TRANSACTION", aggregateId, "TRANSACTION_CREATED", "api-consumer-1", A_CORRELATION_ID, "{}");
-		when(auditRepositoryPort.save(any(AuditEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		AuditService service = new AuditService(auditRepositoryPort, FIXED_CLOCK);
-		AuditEvent recorded = service.record(command);
+		service.record(command);
 
+		ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+		verify(auditRepositoryPort).save(captor.capture());
+		AuditEvent recorded = captor.getValue();
 		assertThat(recorded.aggregateType()).isEqualTo("TRANSACTION");
 		assertThat(recorded.aggregateId()).isEqualTo(aggregateId);
 		assertThat(recorded.eventType()).isEqualTo("TRANSACTION_CREATED");
@@ -52,20 +53,20 @@ class AuditServiceTests {
 	void generatesADistinctIdForEachRecordedEvent() {
 		RecordAuditEventCommand command = new RecordAuditEventCommand(
 				"TRANSACTION", UUID.randomUUID(), "TRANSACTION_CREATED", "actor", A_CORRELATION_ID, "{}");
-		when(auditRepositoryPort.save(any(AuditEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		AuditService service = new AuditService(auditRepositoryPort, FIXED_CLOCK);
-		AuditEvent first = service.record(command);
-		AuditEvent second = service.record(command);
+		service.record(command);
+		service.record(command);
 
-		assertThat(first.id()).isNotEqualTo(second.id());
+		ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+		verify(auditRepositoryPort, times(2)).save(captor.capture());
+		assertThat(captor.getAllValues().get(0).id()).isNotEqualTo(captor.getAllValues().get(1).id());
 	}
 
 	@Test
 	void delegatesPersistenceToThePort() {
 		RecordAuditEventCommand command = new RecordAuditEventCommand(
 				"TRANSACTION", UUID.randomUUID(), "TRANSACTION_CREATED", "actor", A_CORRELATION_ID, "{}");
-		when(auditRepositoryPort.save(any(AuditEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		AuditService service = new AuditService(auditRepositoryPort, FIXED_CLOCK);
 		service.record(command);
