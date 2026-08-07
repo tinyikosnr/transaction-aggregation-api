@@ -55,7 +55,7 @@ class CustomerLookupServiceTests {
 
 		CustomerLookupService service = new CustomerLookupService(customerRepositoryPort);
 
-		assertThat(service.exists(id)).isTrue();
+		assertThat(service.exists(id.value())).isTrue();
 		verify(customerRepositoryPort).existsById(id);
 	}
 

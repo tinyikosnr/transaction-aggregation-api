@@ -21,11 +21,12 @@ class MerchantResolutionService implements MerchantResolutionPort {
 	}
 
 	@Override
-	public Merchant resolve(String rawMerchantName) {
+	public MerchantResolutionResult resolve(String rawMerchantName) {
 		String normalisedName = MerchantNormaliser.normalise(rawMerchantName);
 
-		return merchantRepositoryPort.findByNormalisedName(normalisedName)
+		Merchant merchant = merchantRepositoryPort.findByNormalisedName(normalisedName)
 				.orElseGet(() -> createNew(normalisedName, rawMerchantName.trim()));
+		return new MerchantResolutionResult(merchant.id().value(), merchant.displayName());
 	}
 
 	private Merchant createNew(String normalisedName, String displayName) {

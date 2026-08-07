@@ -40,9 +40,10 @@ class MerchantResolutionServiceTests {
 
 		MerchantResolutionService service = new MerchantResolutionService(merchantRepositoryPort, FIXED_CLOCK);
 
-		Merchant resolved = service.resolve("  Checkers #104 Centurion ");
+		MerchantResolutionResult resolved = service.resolve("  Checkers #104 Centurion ");
 
-		assertThat(resolved).isEqualTo(existing);
+		assertThat(resolved.merchantId()).isEqualTo(existing.id().value());
+		assertThat(resolved.displayName()).isEqualTo(existing.displayName());
 		verify(merchantRepositoryPort, never()).save(any());
 	}
 
@@ -63,14 +64,14 @@ class MerchantResolutionServiceTests {
 		when(merchantRepositoryPort.save(any(Merchant.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		MerchantResolutionService service = new MerchantResolutionService(merchantRepositoryPort, FIXED_CLOCK);
-		Merchant resolved = service.resolve(" Woolworths ");
+		MerchantResolutionResult resolved = service.resolve(" Woolworths ");
 
-		assertThat(resolved.normalisedName()).isEqualTo("WOOLWORTHS");
 		assertThat(resolved.displayName()).isEqualTo("Woolworths");
 
 		ArgumentCaptor<Merchant> captor = ArgumentCaptor.forClass(Merchant.class);
 		verify(merchantRepositoryPort).save(captor.capture());
 		assertThat(captor.getValue().normalisedName()).isEqualTo("WOOLWORTHS");
+		assertThat(resolved.merchantId()).isEqualTo(captor.getValue().id().value());
 	}
 
 	@Test
@@ -83,9 +84,10 @@ class MerchantResolutionServiceTests {
 				.thenThrow(new DuplicateMerchantException("SHELL", new RuntimeException("constraint violation")));
 
 		MerchantResolutionService service = new MerchantResolutionService(merchantRepositoryPort, FIXED_CLOCK);
-		Merchant resolved = service.resolve("Shell");
+		MerchantResolutionResult resolved = service.resolve("Shell");
 
-		assertThat(resolved).isEqualTo(concurrentlyCreated);
+		assertThat(resolved.merchantId()).isEqualTo(concurrentlyCreated.id().value());
+		assertThat(resolved.displayName()).isEqualTo(concurrentlyCreated.displayName());
 		verify(merchantRepositoryPort, times(2)).findByNormalisedName("SHELL");
 	}
 
