@@ -38,4 +38,19 @@ class CorrelationIdTests {
 		assertThat(CorrelationId.HEADER_NAME).isEqualTo("X-Correlation-ID");
 	}
 
+	@Test
+	void generateProducesAValidNonBlankValue() {
+		CorrelationId generated = CorrelationId.generate();
+
+		assertThat(generated.value()).isNotBlank();
+	}
+
+	@Test
+	void generateProducesDistinctValuesOnEachCall() {
+		CorrelationId first = CorrelationId.generate();
+		CorrelationId second = CorrelationId.generate();
+
+		assertThat(first).isNotEqualTo(second);
+	}
+
 }

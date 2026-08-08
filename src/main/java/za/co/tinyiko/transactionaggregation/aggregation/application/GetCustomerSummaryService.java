@@ -1,5 +1,6 @@
 package za.co.tinyiko.transactionaggregation.aggregation.application;
 
+import java.time.LocalDate;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -23,7 +24,8 @@ class GetCustomerSummaryService implements GetCustomerSummaryUseCase {
 	}
 
 	@Override
-	public CustomerSummaryView get(UUID customerId, DateRange dateRange) {
+	public CustomerSummaryView get(UUID customerId, LocalDate from, LocalDate to) {
+		DateRange dateRange = new DateRange(from, to);
 		if (!customerExistsPort.exists(customerId)) {
 			throw new CustomerNotFoundException(customerId);
 		}

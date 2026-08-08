@@ -40,7 +40,7 @@ class GetMonthlySummaryServiceTests {
 	void throwsWhenCustomerDoesNotExist() {
 		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(false);
 
-		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE)).isInstanceOf(CustomerNotFoundException.class);
+		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).isInstanceOf(CustomerNotFoundException.class);
 	}
 
 	@Test
@@ -49,7 +49,7 @@ class GetMonthlySummaryServiceTests {
 		when(transactionQueryPort.monthlyTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to()))
 				.thenReturn(List.of(new MonthlyTransactionTotal(YearMonth.of(2026, 1), new BigDecimal("5000.00"), new BigDecimal("100.00"), 2)));
 
-		List<MonthlySummaryView> views = service().get(CUSTOMER_ID, DATE_RANGE);
+		List<MonthlySummaryView> views = service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to());
 
 		assertThat(views).hasSize(1);
 		MonthlySummaryView view = views.get(0);
@@ -66,7 +66,7 @@ class GetMonthlySummaryServiceTests {
 		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(true);
 		when(transactionQueryPort.monthlyTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).thenReturn(List.of());
 
-		assertThat(service().get(CUSTOMER_ID, DATE_RANGE)).isEmpty();
+		assertThat(service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).isEmpty();
 	}
 
 }

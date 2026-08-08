@@ -39,7 +39,7 @@ class GetMerchantSummaryServiceTests {
 	void throwsWhenCustomerDoesNotExist() {
 		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(false);
 
-		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE)).isInstanceOf(CustomerNotFoundException.class);
+		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).isInstanceOf(CustomerNotFoundException.class);
 	}
 
 	@Test
@@ -49,7 +49,7 @@ class GetMerchantSummaryServiceTests {
 		when(transactionQueryPort.merchantTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to()))
 				.thenReturn(List.of(new MerchantTransactionTotal(merchantId, new BigDecimal("100.00"), 1)));
 
-		List<MerchantSummaryView> views = service().get(CUSTOMER_ID, DATE_RANGE);
+		List<MerchantSummaryView> views = service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to());
 
 		assertThat(views).containsExactly(new MerchantSummaryView(merchantId, new BigDecimal("100.00"), "ZAR", 1));
 	}
@@ -59,7 +59,7 @@ class GetMerchantSummaryServiceTests {
 		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(true);
 		when(transactionQueryPort.merchantTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).thenReturn(List.of());
 
-		assertThat(service().get(CUSTOMER_ID, DATE_RANGE)).isEmpty();
+		assertThat(service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).isEmpty();
 	}
 
 }

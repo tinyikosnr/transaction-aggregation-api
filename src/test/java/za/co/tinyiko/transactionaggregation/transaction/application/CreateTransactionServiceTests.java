@@ -20,9 +20,12 @@ import za.co.tinyiko.transactionaggregation.audit.application.RecordAuditEventUs
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationDecision;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationInput;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategoriseTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryView;
+import za.co.tinyiko.transactionaggregation.categorisation.application.GetCategoryUseCase;
 import za.co.tinyiko.transactionaggregation.customer.application.CustomerExistsPort;
 import za.co.tinyiko.transactionaggregation.merchant.application.MerchantResolutionPort;
 import za.co.tinyiko.transactionaggregation.merchant.application.MerchantResolutionResult;
+import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
 import za.co.tinyiko.transactionaggregation.transaction.domain.Money;
 import za.co.tinyiko.transactionaggregation.transaction.domain.SourceStatus;
 import za.co.tinyiko.transactionaggregation.transaction.domain.Transaction;
@@ -48,6 +51,8 @@ class CreateTransactionServiceTests {
 	private static final UUID CUSTOMER_ID = UUID.randomUUID();
 	private static final UUID CATEGORY_ID = UUID.randomUUID();
 	private static final UUID MERCHANT_ID = UUID.randomUUID();
+	private static final CorrelationId CORRELATION_ID = new CorrelationId("test-correlation-id");
+	private static final CategoryView CATEGORY_VIEW = new CategoryView("GROCERIES", "Groceries");
 
 	@Mock
 	private TransactionRepositoryPort transactionRepositoryPort;
@@ -60,14 +65,16 @@ class CreateTransactionServiceTests {
 	@Mock
 	private CategoriseTransactionUseCase categoriseTransactionUseCase;
 	@Mock
+	private GetCategoryUseCase getCategoryUseCase;
+	@Mock
 	private RecordAuditEventUseCase recordAuditEventUseCase;
 
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	private CreateTransactionService service() {
 		return new CreateTransactionService(transactionRepositoryPort, transactionSourceRepositoryPort,
-				customerExistsPort, merchantResolutionPort, categoriseTransactionUseCase, recordAuditEventUseCase,
-				FIXED_CLOCK, objectMapper);
+				customerExistsPort, merchantResolutionPort, categoriseTransactionUseCase, getCategoryUseCase,
+				recordAuditEventUseCase, FIXED_CLOCK, objectMapper);
 	}
 
 	private static TransactionSource activeSource() {
@@ -77,7 +84,7 @@ class CreateTransactionServiceTests {
 
 	private static CreateTransactionCommand aCommand() {
 		return new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A", new BigDecimal("125.50"), "ZAR",
-				"DEBIT", "Checkers Centurion", "Checkers", Instant.parse("2026-08-06T08:00:00Z"));
+				"DEBIT", "Checkers Centurion", "Checkers", Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
 	}
 
 	@Test
@@ -90,17 +97,22 @@ class CreateTransactionServiceTests {
 		when(merchantResolutionPort.resolve("Checkers")).thenReturn(new MerchantResolutionResult(MERCHANT_ID, "Checkers"));
 		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
 				.thenReturn(new CategorisationDecision(CATEGORY_ID, UUID.randomUUID(), "Merchant contained CHECKERS"));
+		when(getCategoryUseCase.get(CATEGORY_ID)).thenReturn(CATEGORY_VIEW);
 		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-		Transaction result = service().create(aCommand());
+		TransactionCreatedResult result = service().create(aCommand());
 
 		assertThat(result.customerId()).isEqualTo(CUSTOMER_ID);
-		assertThat(result.categoryId()).isEqualTo(CATEGORY_ID);
+		assertThat(result.categoryCode()).isEqualTo("GROCERIES");
+		assertThat(result.categoryName()).isEqualTo("Groceries");
 		assertThat(result.merchantId()).isEqualTo(MERCHANT_ID);
+		assertThat(result.merchantDisplayName()).isEqualTo("Checkers");
+		assertThat(result.sourceCode()).isEqualTo("MOCK_BANK_A");
 
 		ArgumentCaptor<RecordAuditEventCommand> auditCaptor = ArgumentCaptor.forClass(RecordAuditEventCommand.class);
 		verify(recordAuditEventUseCase).record(auditCaptor.capture());
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_CREATED");
+		assertThat(auditCaptor.getValue().correlationId()).isEqualTo(CORRELATION_ID);
 	}
 
 	@Test
@@ -114,11 +126,12 @@ class CreateTransactionServiceTests {
 				.thenReturn(new MerchantResolutionResult(MERCHANT_ID, "Dis-Chem Pharmacy"));
 		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
 				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback"));
+		when(getCategoryUseCase.get(CATEGORY_ID)).thenReturn(CATEGORY_VIEW);
 		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
 				new BigDecimal("125.50"), "ZAR", "DEBIT", "pharmacy purchase", "Dis-Chem Pharmacy",
-				Instant.parse("2026-08-06T08:00:00Z"));
+				Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
 
 		service().create(command);
 
@@ -136,21 +149,23 @@ class CreateTransactionServiceTests {
 				.thenReturn(Optional.empty());
 		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
 				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback"));
+		when(getCategoryUseCase.get(CATEGORY_ID)).thenReturn(CATEGORY_VIEW);
 		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("125.50"), "ZAR", "DEBIT", "unknown", " ", Instant.parse("2026-08-06T08:00:00Z"));
+				new BigDecimal("125.50"), "ZAR", "DEBIT", "unknown", " ", Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
 
-		Transaction result = service().create(command);
+		TransactionCreatedResult result = service().create(command);
 
 		assertThat(result.merchantId()).isNull();
+		assertThat(result.merchantDisplayName()).isNull();
 		verify(merchantResolutionPort, never()).resolve(anyString());
 	}
 
 	@Test
 	void throwsAndRecordsAuditForInvalidCurrency() {
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("125.50"), "zar", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"));
+				new BigDecimal("125.50"), "zar", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
 
 		assertThatThrownBy(() -> service().create(command)).isInstanceOf(TransactionValidationException.class);
 
@@ -163,7 +178,7 @@ class CreateTransactionServiceTests {
 	@Test
 	void throwsAndRecordsAuditForNegativeAmountWithoutAttemptingSourceResolution() {
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("-10.00"), "ZAR", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"));
+				new BigDecimal("-10.00"), "ZAR", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
 
 		assertThatThrownBy(() -> service().create(command)).isInstanceOf(TransactionValidationException.class);
 
@@ -177,7 +192,7 @@ class CreateTransactionServiceTests {
 	@Test
 	void throwsAndRecordsAuditForInvalidDirection() {
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("125.50"), "ZAR", "SIDEWAYS", "desc", null, Instant.parse("2026-08-06T08:00:00Z"));
+				new BigDecimal("125.50"), "ZAR", "SIDEWAYS", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
 
 		assertThatThrownBy(() -> service().create(command)).isInstanceOf(TransactionValidationException.class);
 
