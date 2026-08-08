@@ -7,6 +7,9 @@ import org.junit.jupiter.api.Test;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationDecision;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationInput;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategoriseTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryNotFoundException;
+import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryView;
+import za.co.tinyiko.transactionaggregation.categorisation.application.GetCategoryUseCase;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.CategorisationRule;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.CategorisationRuleEngine;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.CategorisationRuleId;
@@ -38,7 +41,10 @@ class CategorisationArchitectureTests {
 	private static final List<Class<?>> APPLICATION_TYPES = List.of(
 			CategoriseTransactionUseCase.class,
 			CategorisationInput.class,
-			CategorisationDecision.class
+			CategorisationDecision.class,
+			GetCategoryUseCase.class,
+			CategoryView.class,
+			CategoryNotFoundException.class
 	);
 
 	@Test

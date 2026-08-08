@@ -5,6 +5,7 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCategory;
+import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCategoryId;
 import za.co.tinyiko.transactionaggregation.categorisation.mapper.TransactionCategoryMapper;
 import za.co.tinyiko.transactionaggregation.categorisation.port.CategoryRepositoryPort;
 
@@ -20,6 +21,12 @@ class JpaCategoryRepositoryAdapter implements CategoryRepositoryPort {
 	@Override
 	public Optional<TransactionCategory> findFallback() {
 		return springDataTransactionCategoryRepository.findFirstByFallbackTrue()
+				.map(TransactionCategoryMapper::toDomain);
+	}
+
+	@Override
+	public Optional<TransactionCategory> findById(TransactionCategoryId id) {
+		return springDataTransactionCategoryRepository.findById(id.value())
 				.map(TransactionCategoryMapper::toDomain);
 	}
 

@@ -39,7 +39,7 @@ class GetCategorySummaryServiceTests {
 	void throwsWhenCustomerDoesNotExist() {
 		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(false);
 
-		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE)).isInstanceOf(CustomerNotFoundException.class);
+		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).isInstanceOf(CustomerNotFoundException.class);
 	}
 
 	@Test
@@ -49,7 +49,7 @@ class GetCategorySummaryServiceTests {
 		when(transactionQueryPort.categoryTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to()))
 				.thenReturn(List.of(new CategoryTransactionTotal(categoryId, new BigDecimal("130.00"), 2)));
 
-		List<CategorySummaryView> views = service().get(CUSTOMER_ID, DATE_RANGE);
+		List<CategorySummaryView> views = service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to());
 
 		assertThat(views).containsExactly(new CategorySummaryView(categoryId, new BigDecimal("130.00"), "ZAR", 2));
 	}
@@ -59,7 +59,7 @@ class GetCategorySummaryServiceTests {
 		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(true);
 		when(transactionQueryPort.categoryTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).thenReturn(List.of());
 
-		assertThat(service().get(CUSTOMER_ID, DATE_RANGE)).isEmpty();
+		assertThat(service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).isEmpty();
 	}
 
 }

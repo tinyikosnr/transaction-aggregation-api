@@ -1,5 +1,6 @@
 package za.co.tinyiko.transactionaggregation.aggregation.application;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -23,7 +24,8 @@ class GetMonthlySummaryService implements GetMonthlySummaryUseCase {
 	}
 
 	@Override
-	public List<MonthlySummaryView> get(UUID customerId, DateRange dateRange) {
+	public List<MonthlySummaryView> get(UUID customerId, LocalDate from, LocalDate to) {
+		DateRange dateRange = new DateRange(from, to);
 		if (!customerExistsPort.exists(customerId)) {
 			throw new CustomerNotFoundException(customerId);
 		}

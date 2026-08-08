@@ -12,6 +12,7 @@ import za.co.tinyiko.transactionaggregation.transaction.application.CustomerTran
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
 import za.co.tinyiko.transactionaggregation.transaction.application.MerchantTransactionTotal;
 import za.co.tinyiko.transactionaggregation.transaction.application.MonthlyTransactionTotal;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionCreatedResult;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionQueryPort;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSourceNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionValidationException;
@@ -53,6 +54,7 @@ class TransactionArchitectureTests {
 	private static final List<Class<?>> APPLICATION_TYPES = List.of(
 			CreateTransactionUseCase.class,
 			CreateTransactionCommand.class,
+			TransactionCreatedResult.class,
 			TransactionValidationException.class,
 			TransactionSourceNotFoundException.class,
 			CustomerNotFoundException.class,

@@ -38,7 +38,7 @@ class GetCustomerSummaryServiceTests {
 	void throwsWhenCustomerDoesNotExist() {
 		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(false);
 
-		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE)).isInstanceOf(CustomerNotFoundException.class);
+		assertThatThrownBy(() -> service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to())).isInstanceOf(CustomerNotFoundException.class);
 	}
 
 	@Test
@@ -47,7 +47,7 @@ class GetCustomerSummaryServiceTests {
 		when(transactionQueryPort.customerTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to()))
 				.thenReturn(new CustomerTransactionTotals(new BigDecimal("5000.00"), new BigDecimal("3212.50"), 82));
 
-		CustomerSummaryView view = service().get(CUSTOMER_ID, DATE_RANGE);
+		CustomerSummaryView view = service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to());
 
 		assertThat(view.customerId()).isEqualTo(CUSTOMER_ID);
 		assertThat(view.periodFrom()).isEqualTo(DATE_RANGE.from());
@@ -65,7 +65,7 @@ class GetCustomerSummaryServiceTests {
 		when(transactionQueryPort.customerTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to()))
 				.thenReturn(new CustomerTransactionTotals(new BigDecimal("100.00"), new BigDecimal("400.00"), 5));
 
-		CustomerSummaryView view = service().get(CUSTOMER_ID, DATE_RANGE);
+		CustomerSummaryView view = service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to());
 
 		assertThat(view.netCashFlow()).isEqualByComparingTo("-300.00");
 	}
@@ -76,7 +76,7 @@ class GetCustomerSummaryServiceTests {
 		when(transactionQueryPort.customerTotals(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to()))
 				.thenReturn(new CustomerTransactionTotals(BigDecimal.ZERO, BigDecimal.ZERO, 0));
 
-		CustomerSummaryView view = service().get(CUSTOMER_ID, DATE_RANGE);
+		CustomerSummaryView view = service().get(CUSTOMER_ID, DATE_RANGE.from(), DATE_RANGE.to());
 
 		assertThat(view.totalIncome()).isEqualByComparingTo(BigDecimal.ZERO);
 		assertThat(view.totalExpenditure()).isEqualByComparingTo(BigDecimal.ZERO);

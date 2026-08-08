@@ -4,7 +4,6 @@ import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +15,8 @@ import za.co.tinyiko.transactionaggregation.audit.application.RecordAuditEventUs
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationDecision;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategorisationInput;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategoriseTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryView;
+import za.co.tinyiko.transactionaggregation.categorisation.application.GetCategoryUseCase;
 import za.co.tinyiko.transactionaggregation.customer.application.CustomerExistsPort;
 import za.co.tinyiko.transactionaggregation.merchant.application.MerchantResolutionPort;
 import za.co.tinyiko.transactionaggregation.merchant.application.MerchantResolutionResult;
@@ -36,11 +37,11 @@ import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSourceRe
  * this same modular monolith, so nothing here violates "no long-running/external calls inside a
  * database transaction."
  *
- * <p>{@code correlationId} is a fresh random value generated per call, not a real propagated
- * request correlation id - there is no request-scoped correlation-id infrastructure yet (no
- * filter reads/generates {@code X-Correlation-ID}). {@code actor} is hardcoded to
- * {@code "SYSTEM"} for the same reason - no security module exists yet to supply a JWT subject.
- * Both are deliberate, flagged placeholders, not a silent pretence that these are solved.
+ * <p>{@code correlationId} comes from the command (SAD 34.10) - resolved upstream by
+ * {@code config.CorrelationIdFilter} from the inbound request, not generated here, so the same
+ * id ends up on both the HTTP response and this transaction's audit trail. {@code actor} is
+ * still hardcoded to {@code "SYSTEM"} - no security module exists yet to supply a JWT subject.
+ * That remains a deliberate, flagged placeholder, not a silent pretence that it's solved.
  */
 @Service
 class CreateTransactionService implements CreateTransactionUseCase {
@@ -53,6 +54,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 	private final CustomerExistsPort customerExistsPort;
 	private final MerchantResolutionPort merchantResolutionPort;
 	private final CategoriseTransactionUseCase categoriseTransactionUseCase;
+	private final GetCategoryUseCase getCategoryUseCase;
 	private final RecordAuditEventUseCase recordAuditEventUseCase;
 	private final Clock clock;
 	private final ObjectMapper objectMapper;
@@ -63,6 +65,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 			CustomerExistsPort customerExistsPort,
 			MerchantResolutionPort merchantResolutionPort,
 			CategoriseTransactionUseCase categoriseTransactionUseCase,
+			GetCategoryUseCase getCategoryUseCase,
 			RecordAuditEventUseCase recordAuditEventUseCase,
 			Clock clock,
 			ObjectMapper objectMapper
@@ -72,6 +75,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		this.customerExistsPort = customerExistsPort;
 		this.merchantResolutionPort = merchantResolutionPort;
 		this.categoriseTransactionUseCase = categoriseTransactionUseCase;
+		this.getCategoryUseCase = getCategoryUseCase;
 		this.recordAuditEventUseCase = recordAuditEventUseCase;
 		this.clock = clock;
 		this.objectMapper = objectMapper;
@@ -79,9 +83,9 @@ class CreateTransactionService implements CreateTransactionUseCase {
 
 	@Override
 	@Transactional
-	public Transaction create(CreateTransactionCommand command) {
+	public TransactionCreatedResult create(CreateTransactionCommand command) {
 		TransactionId transactionId = TransactionId.generate();
-		CorrelationId correlationId = new CorrelationId(UUID.randomUUID().toString());
+		CorrelationId correlationId = command.correlationId();
 
 		Money amount = buildMoney(command, transactionId, correlationId);
 		TransactionDirection direction = parseDirection(command, transactionId, correlationId);
@@ -97,7 +101,29 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		Transaction saved = persist(transaction, source, command, correlationId);
 
 		recordSuccess(saved, decision, correlationId);
-		return saved;
+
+		CategoryView category = getCategoryUseCase.get(decision.categoryId());
+		return toResult(saved, source, merchant, category);
+	}
+
+	private TransactionCreatedResult toResult(Transaction transaction, TransactionSource source, MerchantResolutionResult merchant, CategoryView category) {
+		return new TransactionCreatedResult(
+				transaction.id().value(),
+				transaction.customerId(),
+				source.code(),
+				transaction.externalTransactionId(),
+				merchant == null ? null : merchant.merchantId(),
+				merchant == null ? null : merchant.displayName(),
+				category.code(),
+				category.name(),
+				transaction.amount().amount(),
+				transaction.amount().currency(),
+				transaction.direction().name(),
+				transaction.description(),
+				transaction.status().name(),
+				transaction.occurredAt(),
+				transaction.receivedAt(),
+				transaction.createdAt());
 	}
 
 	private Money buildMoney(CreateTransactionCommand command, TransactionId transactionId, CorrelationId correlationId) {

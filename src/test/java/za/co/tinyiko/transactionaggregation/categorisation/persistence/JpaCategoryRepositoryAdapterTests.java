@@ -1,6 +1,7 @@
 package za.co.tinyiko.transactionaggregation.categorisation.persistence;
 
 import java.util.Optional;
+import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,6 +12,7 @@ import org.springframework.context.annotation.Import;
 
 import za.co.tinyiko.transactionaggregation.TestcontainersConfiguration;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCategory;
+import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCategoryId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,6 +54,23 @@ class JpaCategoryRepositoryAdapterTests {
 				.count();
 
 		assertThat(fallbackCount).isEqualTo(1);
+	}
+
+	@Test
+	void findByIdReturnsTheMatchingSeededCategory() {
+		TransactionCategory fallback = adapter.findFallback().orElseThrow();
+
+		Optional<TransactionCategory> found = adapter.findById(fallback.id());
+
+		assertThat(found).isPresent();
+		assertThat(found.get().code()).isEqualTo(fallback.code());
+	}
+
+	@Test
+	void findByIdReturnsEmptyForAnUnknownId() {
+		Optional<TransactionCategory> found = adapter.findById(new TransactionCategoryId(UUID.randomUUID()));
+
+		assertThat(found).isEmpty();
 	}
 
 }
