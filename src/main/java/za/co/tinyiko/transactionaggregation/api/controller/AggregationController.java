@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -51,6 +52,7 @@ class AggregationController {
 	}
 
 	@GetMapping("/summary")
+	@PreAuthorize("hasAuthority('AGGREGATION_READ')")
 	CustomerSummaryResponse customerSummary(
 			@PathVariable UUID customerId,
 			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -61,6 +63,7 @@ class AggregationController {
 	}
 
 	@GetMapping("/categories")
+	@PreAuthorize("hasAuthority('AGGREGATION_READ')")
 	List<CategorySummaryResponse> categorySummary(
 			@PathVariable UUID customerId,
 			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -70,6 +73,7 @@ class AggregationController {
 	}
 
 	@GetMapping("/merchants")
+	@PreAuthorize("hasAuthority('AGGREGATION_READ')")
 	List<MerchantSummaryResponse> merchantSummary(
 			@PathVariable UUID customerId,
 			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -79,6 +83,7 @@ class AggregationController {
 	}
 
 	@GetMapping("/monthly-summary")
+	@PreAuthorize("hasAuthority('AGGREGATION_READ')")
 	List<MonthlySummaryResponse> monthlySummary(
 			@PathVariable UUID customerId,
 			@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,

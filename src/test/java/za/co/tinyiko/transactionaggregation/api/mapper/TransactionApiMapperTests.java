@@ -17,14 +17,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TransactionApiMapperTests {
 
 	private static final CorrelationId CORRELATION_ID = new CorrelationId("test-correlation-id");
+	private static final String ACTOR = "jwt-subject-001";
 
 	@Test
-	void mapsEveryRequestFieldOntoTheCommandAlongsideTheCorrelationId() {
+	void mapsEveryRequestFieldOntoTheCommandAlongsideTheCorrelationIdAndActor() {
 		CreateTransactionRequest request = new CreateTransactionRequest(
 				UUID.randomUUID(), "MOCK_BANK_A", "EXT-001", "Checkers", new BigDecimal("125.50"),
 				"ZAR", "DEBIT", "groceries", Instant.parse("2026-08-06T08:00:00Z"));
 
-		CreateTransactionCommand command = TransactionApiMapper.toCommand(request, CORRELATION_ID);
+		CreateTransactionCommand command = TransactionApiMapper.toCommand(request, CORRELATION_ID, ACTOR);
 
 		assertThat(command.customerId()).isEqualTo(request.customerId());
 		assertThat(command.sourceCode()).isEqualTo(request.sourceCode());
@@ -36,6 +37,7 @@ class TransactionApiMapperTests {
 		assertThat(command.description()).isEqualTo(request.description());
 		assertThat(command.occurredAt()).isEqualTo(request.occurredAt());
 		assertThat(command.correlationId()).isEqualTo(CORRELATION_ID);
+		assertThat(command.actor()).isEqualTo(ACTOR);
 	}
 
 	@Test

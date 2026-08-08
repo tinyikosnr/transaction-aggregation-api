@@ -16,7 +16,7 @@ public final class TransactionApiMapper {
 	private TransactionApiMapper() {
 	}
 
-	public static CreateTransactionCommand toCommand(CreateTransactionRequest request, CorrelationId correlationId) {
+	public static CreateTransactionCommand toCommand(CreateTransactionRequest request, CorrelationId correlationId, String actor) {
 		return new CreateTransactionCommand(
 				request.externalTransactionId(),
 				request.customerId(),
@@ -27,7 +27,8 @@ public final class TransactionApiMapper {
 				request.description(),
 				request.merchantName(),
 				request.occurredAt(),
-				correlationId);
+				correlationId,
+				actor);
 	}
 
 	public static TransactionResponse toResponse(TransactionCreatedResult result) {

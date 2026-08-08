@@ -1,8 +1,10 @@
 package za.co.tinyiko.transactionaggregation.api.controller;
 
 import java.net.URI;
+import java.security.Principal;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,6 +26,12 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionC
  * Single documented transaction endpoint this branch implements (SAD 35.1, TDS 28) - bulk
  * creation, retrieval and search are excluded, see the plan's explicit exclusion list. Thin: all
  * orchestration lives in {@link CreateTransactionUseCase}.
+ *
+ * <p>{@code Principal} - a plain JDK type, not a Spring Security one - is enough to read the
+ * authenticated actor: {@code JwtAuthenticationToken.getName()} returns the JWT {@code sub} claim
+ * by Spring Security's own standard behaviour. Since this endpoint requires authentication
+ * ({@code @PreAuthorize} below, plus the filter chain's {@code anyRequest().authenticated()}),
+ * {@code principal} is guaranteed non-null by the time this method body runs.
  */
 @RestController
 @RequestMapping("/api/v1/transactions")
@@ -36,9 +44,10 @@ class TransactionController {
 	}
 
 	@PostMapping
-	ResponseEntity<TransactionResponse> create(@Valid @RequestBody CreateTransactionRequest request, HttpServletRequest servletRequest) {
+	@PreAuthorize("hasAuthority('TRANSACTION_WRITE')")
+	ResponseEntity<TransactionResponse> create(@Valid @RequestBody CreateTransactionRequest request, HttpServletRequest servletRequest, Principal principal) {
 		CorrelationId correlationId = (CorrelationId) servletRequest.getAttribute(CorrelationId.REQUEST_ATTRIBUTE_NAME);
-		CreateTransactionCommand command = TransactionApiMapper.toCommand(request, correlationId);
+		CreateTransactionCommand command = TransactionApiMapper.toCommand(request, correlationId, principal.getName());
 		TransactionCreatedResult result = createTransactionUseCase.create(command);
 		TransactionResponse response = TransactionApiMapper.toResponse(result);
 

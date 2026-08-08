@@ -25,7 +25,7 @@ This repository is in an early implementation phase. The SAD, accepted ADRs, and
 | Spring Data JPA / Hibernate | (Boot-managed) | Persistence |
 | PostgreSQL | `postgres:latest` locally | Pin an explicit version before any shared/prod environment |
 | Flyway | `flyway-database-postgresql` | Schema migrations; `V1` (customers), `V2` (merchants), `V3`/`V4` (categorisation tables), `V5`/`V6` (categorisation seed data), `V7` (audit events), `V8`/`V9` (transaction tables), `V10` (transaction source seed data) exist so far |
-| Spring Security + OAuth2 Resource Server | (Boot-managed) | JWT bearer authentication |
+| Spring Security + OAuth2 Resource Server | (Boot-managed) | JWT bearer authentication, `@PreAuthorize`-enforced authorities (`security.SecurityConfig`, since `feature/security`) |
 | Spring Validation | (Boot-managed) | Jakarta Bean Validation |
 | Spring Boot Actuator + Micrometer (Prometheus) | (Boot-managed) | Health, metrics |
 | Maven | wrapped (`mvnw`, Maven 3.9.16) | Do not require a system-installed Maven |
@@ -70,15 +70,19 @@ The **domain layer must never depend on Spring, Jakarta EE, or any persistence/f
 
 ### Package Responsibilities
 
-Base package: `za.co.tinyiko.transactionaggregation`. The 10 top-level module packages listed below already exist (`feature/project-structure`) as an empty skeleton: each has a `package-info.java` documenting its responsibility, and `shared` carries an explicit Spring Modulith `@ApplicationModule` declaration (see [Module Boundaries and Dependency Rules](#module-boundaries-and-dependency-rules)). The internal per-module layering shown below (`domain`, `application`, `port`, etc.) is the target structure from the Technical Design Specification; it is created incrementally, only as each module's feature branch adds real code to it. `customer`, `merchant`, `categorisation`, `audit`, `transaction`, and `aggregation` are now fully populated (shown below); only `api` and `security` remain empty skeletons, both deferred to a future branch (see [Implementation Rules](#implementation-rules)).
+Base package: `za.co.tinyiko.transactionaggregation`. The 10 top-level module packages listed below already exist (`feature/project-structure`) as an empty skeleton: each has a `package-info.java` documenting its responsibility, and `shared` carries an explicit Spring Modulith `@ApplicationModule` declaration (see [Module Boundaries and Dependency Rules](#module-boundaries-and-dependency-rules)). The internal per-module layering shown below (`domain`, `application`, `port`, etc.) is the target structure from the Technical Design Specification; it is created incrementally, only as each module's feature branch adds real code to it. Every module is now fully populated, including `api` and `security` (shown below) - see [Implementation Rules](#implementation-rules) for the full delivery history.
 
 ```
 za.co.tinyiko.transactionaggregation
 ├── api                     # shared presentation layer: controllers, request/response DTOs, exception advice
-│   ├── controller
-│   ├── request
-│   ├── response
-│   └── advice
+│   ├── controller           TransactionController, AggregationController (package-private, thin)
+│   ├── dto
+│   │   ├── request           CreateTransactionRequest
+│   │   └── response          TransactionResponse, CustomerSummaryResponse, CategorySummaryResponse,
+│   │                          MerchantSummaryResponse, MonthlySummaryResponse
+│   ├── mapper                TransactionApiMapper, AggregationApiMapper (pure structural mapping, static)
+│   └── advice                GlobalExceptionHandler (RFC 9457 ProblemDetail; error codes match SAD 39.4
+│                               exactly, not TDS 40's TRX-NNN/SEC-NNN scheme - see Documentation Precedence)
 ├── transaction              # owns transactions, transaction_sources
 │   ├── domain               Transaction, TransactionId, TransactionSource, TransactionSourceId, Money,
 │   │                          TransactionDirection (local to this module, see below), TransactionStatus, SourceStatus
@@ -145,8 +149,20 @@ za.co.tinyiko.transactionaggregation
 │   │                          SpringDataAuditRepository, JpaAuditRepositoryAdapter
 │   └── mapper                AuditMapper (toDomain + toEntity, not applyTo; see below)
 ├── security                  # JWT validation, role/authority extraction, access-denied handling
+│   ├── SecurityConfig         The only public type: SecurityFilterChain, @EnableMethodSecurity, the
+│   │                          production issuer-based JwtDecoder (@Profile("!local")) and the local
+│   │                          symmetric-key one (@Profile("local"))
+│   ├── RoleClaimAuthoritiesConverter   ADR-016's role->authority mapping (package-private, no Spring
+│   │                          bean - constructed directly by SecurityConfig, same as its siblings below)
+│   ├── ProblemDetailAuthenticationEntryPoint, ProblemDetailAccessDeniedHandler   RFC 9457 401/403
+│   │                          responses matching api.advice.GlobalExceptionHandler's shape
+│   └── ProblemDetailSupport   shared response-writing helper for the two above (package-private)
 ├── config                     # cross-cutting Spring configuration (Jackson, JPA, clock, correlation ID filter, OpenAPI)
-│   └── ClockConfig           # the one Clock bean, added when customer's first @Service needed it
+│   ├── ClockConfig           # the one Clock bean, added when customer's first @Service needed it
+│   └── CorrelationIdFilter   # resolves/generates X-Correlation-ID, MDC, request attribute (feature/api);
+│                               @Order(HIGHEST_PRECEDENCE) so it runs before security.SecurityConfig's
+│                               filter chain - verified empirically that correlation IDs and MDC are
+│                               populated for 401/403 responses too, not just successful ones
 └── shared                     # reusable technical building blocks only
     ├── event                   # DomainEventEnvelope<T>: the common event wire format (TDS 45)
     └── logging                 # CorrelationId: request-tracing value object (SAD 34.10, 37)
@@ -292,7 +308,8 @@ Enforce, in order of how often they get sacrificed for expediency:
 - Validate all input: Bean Validation at the API boundary, explicit invariant checks in the domain/application layers. Never trust that API validation alone is sufficient.
 - Never expose JPA entities through REST. Always map to/from purpose-specific DTOs.
 - Whitelist any dynamically-provided sort field or query parameter before it reaches persistence; never pass client-supplied property names straight into a query.
-- `@PreAuthorize` checks fine-grained authorities (`TRANSACTION_WRITE`, `CUSTOMER_READ`, etc.), never role names. Roles (`ROLE_API_CONSUMER`, `ROLE_SUPPORT`, `ROLE_ADMIN`) are collections of authorities assigned to a client; the approved mapping is ADR-016 (SAD 49.1, TDS 42). This is documentation only; the Spring Security configuration itself is not yet implemented.
+- `@PreAuthorize` checks fine-grained authorities (`TRANSACTION_WRITE`, `CUSTOMER_READ`, etc.), never role names. Roles (`ROLE_API_CONSUMER`, `ROLE_SUPPORT`, `ROLE_ADMIN`) are collections of authorities assigned to a client; the approved mapping is ADR-016 (SAD 49.1, TDS 42). Implemented since `feature/security`: `security.RoleClaimAuthoritiesConverter` expands a JWT's `roles` claim (already `ROLE_`-prefixed) into granted authorities at authentication time, and every controller method that needs one carries its own `@PreAuthorize` - the single source of authorization truth; `security.SecurityConfig`'s own `authorizeHttpRequests` only distinguishes public (`/actuator/health`) from authenticated, never repeats an authority check.
+- **Cross-module contracts stay security-neutral too, the same rule as the domain-type-leak rule above, applied to `Authentication`/`Jwt`/`Principal`.** `transaction.application.CreateTransactionCommand.actor()` is a plain `String` (the JWT `sub` claim), never a Spring Security or JWT type - `api.controller.TransactionController` extracts it via `java.security.Principal.getName()` (a JDK type, not a Spring Security one) rather than `@AuthenticationPrincipal Jwt`, so no business module or `api` controller needs to import `org.springframework.security.oauth2.jwt.Jwt` at all. Apply the same primitive-only boundary to any future authenticated-identity propagation.
 
 ## Testing Rules
 
@@ -346,7 +363,8 @@ Implement **one bounded context at a time**, in dependency order, each independe
 
 ```
 feature/project-structure → feature/shared → feature/customer → feature/merchant →
-feature/categorisation → feature/audit → feature/transaction → feature/aggregation
+feature/categorisation → feature/audit → feature/transaction → feature/aggregation →
+feature/api → feature/security
 ```
 
 **`feature/project-structure` comes first and establishes only:**
@@ -362,4 +380,4 @@ After that, `shared`, `customer`, and `merchant` come next because nothing else 
 
 Do not start a module whose dependencies aren't yet in place, and do not let a feature branch grow to span multiple modules. That's a signal the module boundary needs re-examining, not a reason to skip the branch split.
 
-**Current status:** `project-structure`, `shared`, `customer`, `merchant`, `categorisation`, `audit`, `transaction`, and `aggregation` are all complete - every module in the original sequence diagram. `categorisation` and `audit` were built as sibling branches off the same post-merchant `main` commit, since neither depends on the other; `transaction` resumed only once both were merged, since it genuinely depends on both. The original, once-reverted `feature/transaction` attempt was blocked by `transactions.category_id` being a `NOT NULL` foreign key to a `transaction_categories` table that didn't exist yet at that point - see the git history for the full reasoning, no longer relevant now that both prerequisites exist. `TransactionStatus`'s persisted values were revisited as planned: SAD's three-value version (`RECEIVED`, `PROCESSED`, `REJECTED`) was followed over TDS's five-value one (see [Documentation Conflicts](#documentation-precedence)), and in this branch's synchronous single-transaction flow, only `PROCESSED` is ever actually produced by `Transaction.register` - a validation failure, duplicate, unsupported source or missing customer is rejected via an exception before a `Transaction` is ever constructed, not by persisting a row with status `RECEIVED` or `REJECTED`. `aggregation` needed a read/query capability added to `transaction` that hadn't existed before (`TransactionQueryPort`, see [Ports and Adapters](#ports-and-adapters)) - exactly the dependency the original sequencing anticipated by building `aggregation` last. **`api` and `security` are now the only remaining empty skeletons.** Every module-level bounded context is implemented; what's left is the presentation/security layer that wires the already-built application use cases (across all six populated modules) to actual HTTP endpoints - `CreateTransactionUseCase`, the four `Get*SummaryUseCase`s, and whatever `customer`/`merchant`/`categorisation` capabilities are deemed in scope. No module's application layer should need further changes just to support this; if one turns out to, treat that as a signal worth pausing on, not a routine expectation.
+**Current status:** `project-structure`, `shared`, `customer`, `merchant`, `categorisation`, `audit`, `transaction`, and `aggregation` are all complete - every module in the original sequence diagram. `categorisation` and `audit` were built as sibling branches off the same post-merchant `main` commit, since neither depends on the other; `transaction` resumed only once both were merged, since it genuinely depends on both. The original, once-reverted `feature/transaction` attempt was blocked by `transactions.category_id` being a `NOT NULL` foreign key to a `transaction_categories` table that didn't exist yet at that point - see the git history for the full reasoning, no longer relevant now that both prerequisites exist. `TransactionStatus`'s persisted values were revisited as planned: SAD's three-value version (`RECEIVED`, `PROCESSED`, `REJECTED`) was followed over TDS's five-value one (see [Documentation Conflicts](#documentation-precedence)), and in this branch's synchronous single-transaction flow, only `PROCESSED` is ever actually produced by `Transaction.register` - a validation failure, duplicate, unsupported source or missing customer is rejected via an exception before a `Transaction` is ever constructed, not by persisting a row with status `RECEIVED` or `REJECTED`. `aggregation` needed a read/query capability added to `transaction` that hadn't existed before (`TransactionQueryPort`, see [Ports and Adapters](#ports-and-adapters)) - exactly the dependency the original sequencing anticipated by building `aggregation` last. **`api` and `security` are now both complete too - every module in the original sequence diagram is implemented.** `feature/api` wired the already-built application use cases (`CreateTransactionUseCase`, the four `Get*SummaryUseCase`s) to real HTTP endpoints behind a deliberately temporary permit-all `SecurityFilterChain`, and along the way needed one genuine cross-module contract fix predicted by the "no module's application layer should need further changes" caveat above turning out to matter: `aggregation`'s four `Get*SummaryUseCase`s originally took `aggregation.domain.DateRange` directly, which `api` could not reference without exposing `aggregation.domain` cross-module (Spring Modulith would reject it) - fixed by changing those ports to take raw `LocalDate from, LocalDate to` instead, with `DateRange` construction/validation moved inside each `Get*SummaryService`, the exact same "primitives at the boundary" pattern already established for every other cross-module contract. `feature/security` then replaced the temporary posture with the real, documented JWT/RBAC model (SAD 36, TDS 41-44, ADR-007, ADR-016) and needed one further, smaller contract change: `transaction.application.CreateTransactionCommand` gained a plain `String actor` field (the JWT subject), replacing a hardcoded `"SYSTEM"` placeholder - `transaction.application` still never imports a Spring Security type, matching the same primitives-at-the-boundary discipline. Two real, scoped contract changes across two branches, each caught and fixed rather than assumed away - the caveat did its job.

@@ -53,6 +53,7 @@ class CreateTransactionServiceTests {
 	private static final UUID MERCHANT_ID = UUID.randomUUID();
 	private static final CorrelationId CORRELATION_ID = new CorrelationId("test-correlation-id");
 	private static final CategoryView CATEGORY_VIEW = new CategoryView("GROCERIES", "Groceries");
+	private static final String ACTOR = "jwt-subject-001";
 
 	@Mock
 	private TransactionRepositoryPort transactionRepositoryPort;
@@ -84,7 +85,7 @@ class CreateTransactionServiceTests {
 
 	private static CreateTransactionCommand aCommand() {
 		return new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A", new BigDecimal("125.50"), "ZAR",
-				"DEBIT", "Checkers Centurion", "Checkers", Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
+				"DEBIT", "Checkers Centurion", "Checkers", Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID, ACTOR);
 	}
 
 	@Test
@@ -113,6 +114,7 @@ class CreateTransactionServiceTests {
 		verify(recordAuditEventUseCase).record(auditCaptor.capture());
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_CREATED");
 		assertThat(auditCaptor.getValue().correlationId()).isEqualTo(CORRELATION_ID);
+		assertThat(auditCaptor.getValue().actor()).isEqualTo(ACTOR);
 	}
 
 	@Test
@@ -131,7 +133,7 @@ class CreateTransactionServiceTests {
 
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
 				new BigDecimal("125.50"), "ZAR", "DEBIT", "pharmacy purchase", "Dis-Chem Pharmacy",
-				Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
+				Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID, ACTOR);
 
 		service().create(command);
 
@@ -153,7 +155,7 @@ class CreateTransactionServiceTests {
 		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("125.50"), "ZAR", "DEBIT", "unknown", " ", Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
+				new BigDecimal("125.50"), "ZAR", "DEBIT", "unknown", " ", Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID, ACTOR);
 
 		TransactionCreatedResult result = service().create(command);
 
@@ -165,7 +167,7 @@ class CreateTransactionServiceTests {
 	@Test
 	void throwsAndRecordsAuditForInvalidCurrency() {
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("125.50"), "zar", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
+				new BigDecimal("125.50"), "zar", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID, ACTOR);
 
 		assertThatThrownBy(() -> service().create(command)).isInstanceOf(TransactionValidationException.class);
 
@@ -178,7 +180,7 @@ class CreateTransactionServiceTests {
 	@Test
 	void throwsAndRecordsAuditForNegativeAmountWithoutAttemptingSourceResolution() {
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("-10.00"), "ZAR", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
+				new BigDecimal("-10.00"), "ZAR", "DEBIT", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID, ACTOR);
 
 		assertThatThrownBy(() -> service().create(command)).isInstanceOf(TransactionValidationException.class);
 
@@ -192,7 +194,7 @@ class CreateTransactionServiceTests {
 	@Test
 	void throwsAndRecordsAuditForInvalidDirection() {
 		CreateTransactionCommand command = new CreateTransactionCommand("EXT-001", CUSTOMER_ID, "MOCK_BANK_A",
-				new BigDecimal("125.50"), "ZAR", "SIDEWAYS", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID);
+				new BigDecimal("125.50"), "ZAR", "SIDEWAYS", "desc", null, Instant.parse("2026-08-06T08:00:00Z"), CORRELATION_ID, ACTOR);
 
 		assertThatThrownBy(() -> service().create(command)).isInstanceOf(TransactionValidationException.class);
 
