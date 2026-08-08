@@ -42,7 +42,7 @@ class GlobalExceptionHandlerTests {
 				new DuplicateTransactionException(UUID.randomUUID(), "EXT-001"), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "TRX-001");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "TRANSACTION_DUPLICATE");
 		assertThat(response.getBody().getProperties()).containsEntry("correlationId", "handler-test-id");
 	}
 
@@ -52,7 +52,7 @@ class GlobalExceptionHandlerTests {
 				new TransactionSourceNotFoundException("MOCK_BANK_A"), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "SRC-001");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "SOURCE_NOT_FOUND");
 	}
 
 	@Test
@@ -61,7 +61,7 @@ class GlobalExceptionHandlerTests {
 				new CustomerNotFoundException(UUID.randomUUID()), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "CUS-001");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "CUSTOMER_NOT_FOUND");
 	}
 
 	@Test
@@ -71,7 +71,7 @@ class GlobalExceptionHandlerTests {
 				requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "CUS-001");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "CUSTOMER_NOT_FOUND");
 	}
 
 	@Test
@@ -80,7 +80,7 @@ class GlobalExceptionHandlerTests {
 				new CategoryNotFoundException(UUID.randomUUID()), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "CAT-001");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "CATEGORY_NOT_FOUND");
 	}
 
 	@Test
@@ -89,7 +89,7 @@ class GlobalExceptionHandlerTests {
 				new TransactionValidationException("amount must be greater than zero", null), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "VALIDATION_ERROR");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "REQUEST_VALIDATION_FAILED");
 	}
 
 	@Test
@@ -98,7 +98,7 @@ class GlobalExceptionHandlerTests {
 				new IllegalArgumentException("date range must not exceed 24 months"), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "AGG-001");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "INVALID_DATE_RANGE");
 	}
 
 	@Test
@@ -107,7 +107,7 @@ class GlobalExceptionHandlerTests {
 				new MissingServletRequestParameterException("from", "LocalDate"), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "VALIDATION_ERROR");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "REQUEST_VALIDATION_FAILED");
 	}
 
 	@Test
@@ -116,7 +116,7 @@ class GlobalExceptionHandlerTests {
 				new RuntimeException("some internal implementation detail"), requestWithCorrelationId());
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
-		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "INTERNAL_ERROR");
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "INTERNAL_SERVER_ERROR");
 		assertThat(response.getBody().getDetail()).doesNotContain("some internal implementation detail");
 	}
 

@@ -20,6 +20,14 @@ import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
  * {@code feature/api} so the id {@code config.CorrelationIdFilter} resolves for the inbound
  * request is the same one that ends up on this transaction's audit trail, rather than
  * {@link CreateTransactionService} generating its own disconnected value (SAD 34.10).
+ *
+ * <p>{@code actor} is a plain {@code String}, not a {@code Jwt}/{@code Authentication}/
+ * {@code Principal} - added in {@code feature/security} to replace the {@code "SYSTEM"} placeholder
+ * this module used before real authenticated identity existed. It is the JWT {@code sub} claim
+ * (TDS's own audit field catalogue: "actor | String | No | JWT subject or system"), extracted by
+ * {@code api.controller.TransactionController} via {@code java.security.Principal.getName()} - a
+ * JDK type, not a Spring Security one - so this module never needs to know how the value was
+ * derived.
  */
 public record CreateTransactionCommand(
 		String externalTransactionId,
@@ -31,7 +39,8 @@ public record CreateTransactionCommand(
 		String description,
 		String merchantName,
 		Instant occurredAt,
-		CorrelationId correlationId
+		CorrelationId correlationId,
+		String actor
 ) {
 
 	public CreateTransactionCommand {
@@ -43,6 +52,7 @@ public record CreateTransactionCommand(
 		Objects.requireNonNull(direction, "direction must not be null");
 		Objects.requireNonNull(occurredAt, "occurredAt must not be null");
 		Objects.requireNonNull(correlationId, "correlationId must not be null");
+		Objects.requireNonNull(actor, "actor must not be null");
 	}
 
 }

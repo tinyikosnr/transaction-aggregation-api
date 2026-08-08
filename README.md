@@ -2,7 +2,7 @@
 
 A modular-monolith Spring Boot service that ingests financial transactions from multiple upstream sources, validates and categorises them, and exposes REST APIs for retrieval and financial aggregation.
 
-> **Status:** All planned bounded contexts are implemented (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api`). The REST API surface (`feature/api`) is wired up and tested end-to-end. **Security is a temporary permit-all placeholder** — real JWT authentication and authority-based authorization (`feature/security`) have not been implemented yet; see [Security](#security). The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
+> **Status:** All planned bounded contexts are implemented and secured (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api` → `security`). The REST API is wired up, authenticated via JWT bearer tokens, and authorized per SAD 36.4/TDS 42/ADR-016, tested end-to-end. The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
 
 ---
 
@@ -46,6 +46,8 @@ Shared → Transaction ─┬─→ Categorisation
 Aggregation → Transaction, Customer   (read-only, via query ports)
 
 Api → Transaction, Aggregation, Categorisation, Shared   (presentation layer, calls application ports only)
+
+Security → Shared   (JWT validation, role/authority mapping, access-denied handling; no business module depends on it)
 ```
 
 - Modules never reach into another module's repository — cross-module access happens through `application`-layer ports/use-case interfaces, exposed cross-module via a package-level `@NamedInterface` where a real external caller exists.
@@ -65,7 +67,7 @@ Full diagrams (C4 context/container, module dependencies, component, ER, sequenc
 | Persistence | Spring Data JPA (Hibernate) |
 | Database | PostgreSQL |
 | Migrations | Flyway (`flyway-database-postgresql`) |
-| Security | Spring Security + OAuth2 Resource Server dependency present; **not yet configured** — see [Security](#security) |
+| Security | Spring Security + OAuth2 Resource Server (JWT bearer, RS256, issuer/audience validation) — see [Security](#security) |
 | Validation | Spring Validation (Jakarta Bean Validation) |
 | Observability | Spring Boot Actuator, Micrometer, Prometheus registry |
 | Build | Maven (via `mvnw` wrapper) |
@@ -82,14 +84,15 @@ See [`Solution_Architecture_Document(SAD)_v_2_Part_6B_Governance_and_Reference.m
 - Customer, category, merchant, and monthly financial summaries (`GET /api/v1/customers/{customerId}/{summary|categories|merchants|monthly-summary}`), computed read-only from persisted transaction data over a caller-supplied date range.
 - Append-only audit trail for business-significant events (transaction created, validation failed, duplicate rejected, source/customer not found), keyed by correlation ID.
 - Correlation-ID propagation: honours a client-supplied `X-Correlation-ID`, generates one when absent, returns it on every response (success or error), threads it through to audit events, and places it in the logging MDC for the duration of the request.
-- RFC 9457 (`application/problem+json`) error responses with an `errorCode`/`correlationId`/`timestamp` extension shape, covering every documented failure scenario for the implemented endpoints.
+- RFC 9457 (`application/problem+json`) error responses with an `errorCode`/`correlationId`/`timestamp` extension shape, covering every documented failure scenario for the implemented endpoints, including authentication/authorization failures.
+- JWT bearer authentication (OAuth2 Resource Server) and `@PreAuthorize`-enforced, fine-grained authority checks on every implemented endpoint, per the approved role-to-authority mapping (ADR-016) — see [Security](#security).
 
-**Not yet implemented** (documented in the SAD/TDS but out of scope for the current branch — see [`CLAUDE.md`](CLAUDE.md) for the exact exclusion rationale):
+**Not yet implemented** (documented in the SAD/TDS but out of scope so far — see [`CLAUDE.md`](CLAUDE.md) for the exact exclusion rationale):
 
 - Bulk transaction ingestion, transaction retrieval/search (`GET /api/v1/transactions/**`).
-- Any customer/merchant/categorisation-admin/audit CRUD or read endpoint (no documented HTTP contract, or no backing use case, for any of these today).
-- Real authentication/authorization — see [Security](#security).
+- Any customer/merchant/categorisation-admin/audit CRUD or read endpoint (no documented HTTP contract, or no backing use case, for any of these today) — the authorities for them (`CUSTOMER_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ`) are defined in the approved mapping but have nothing to attach to yet.
 - OpenAPI/Swagger generation.
+- Actuator liveness/readiness probes (only the default `/actuator/health` is exposed today) and restricting `/actuator/metrics`/`/env`/`/loggers`.
 
 Full functional and non-functional requirements: [Part 2 – Requirements](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_2_Requirements.md).
 
@@ -136,7 +139,8 @@ Each module's internal layering (`domain`, `application`, `port`, `persistence`,
 | `aggregation` | *(none)* | Financial summaries, computed read-only from transaction data via a query port. |
 | `audit` | `audit_events` | Append-only business event trail. |
 | `api` | *(none)* | REST controllers, request/response DTOs, Bean Validation, RFC 9457 error mapping. Depends only on each module's `application`-layer ports. |
-| `security` / `config` | — | `config` holds cross-cutting configuration (`ClockConfig`, `CorrelationIdFilter`, temporary `SecurityConfig`); `security` is still an empty skeleton pending `feature/security`. |
+| `security` | *(none)* | JWT resource-server configuration, role→authority mapping, RFC 9457-shaped 401/403 responses. Only `SecurityConfig` is public; its collaborators are package-private. |
+| `config` | — | Cross-cutting, security-independent configuration: `ClockConfig`, `CorrelationIdFilter`. |
 
 Ownership rules, dependency directions, and data-access rules: [Part 4 – Domain & Data, 31](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_4_Domain_and_Data.md) and [Part 3 – Architecture, 21](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_3_Architecture.md).
 
@@ -156,7 +160,7 @@ mvnw.cmd spring-boot:run        # Windows
 
 Because `spring-boot-docker-compose` is on the classpath, Spring Boot will automatically start and stop the PostgreSQL container defined in `compose.yaml` when the application starts and stops — a manual `docker compose up` is only needed if you want the database running independently of the app (e.g. to inspect it directly).
 
-The application starts on the default port `8080` under the `transaction-aggregation-api` application name. **Every endpoint is currently unauthenticated** (see [Security](#security)) — do not point this at a shared or public environment as-is.
+The application starts on the default port `8080` under the `transaction-aggregation-api` application name. **The application will fail to start unless `JWT_ISSUER_URI` is set** (or the `local` profile is active) — see [Security](#security) for the local-development JWT setup.
 
 ## Docker
 
@@ -199,37 +203,57 @@ Applied migrations are immutable; schema changes are always additive new migrati
 ./mvnw verify      # full build-verification lifecycle
 ```
 
-The test stack uses JUnit 5, Mockito, Spring Boot Test (including `@WebMvcTest` slices for controllers, mocking the use-case layer — no database needed there), Spring Modulith's test starter (module boundary verification), and Testcontainers for real PostgreSQL integration tests — no mocked database in repository-layer tests. One `@SpringBootTest` smoke test (`CreateTransactionEndToEndTests`) exercises the full real stack (real Postgres, real filter chain, real security chain, real controller, real persistence) for the create-transaction happy path, to catch wiring mistakes a mocked-use-case slice test cannot. Testcontainers-based tests provision their own PostgreSQL container via `TestcontainersConfiguration` and do not depend on, or interact with, the `compose.yaml` database described under [Docker](#docker) — the two are independent container lifecycles, and Docker must be running for either. The testing pyramid, required test types per layer, and the required test list are defined in [Part 6A – Operations, 45](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6A_Operations.md) and [TDS 70](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#70-recommended-first-implementation-slice).
+The test stack uses JUnit 5, Mockito, Spring Boot Test (including `@WebMvcTest` slices for controllers, mocking the use-case layer — no database needed there), Spring Security Test (`jwt()` `MockMvc` request post-processor — no real signed token or identity provider needed in any test), Spring Modulith's test starter (module boundary verification), and Testcontainers for real PostgreSQL integration tests — no mocked database in repository-layer tests. One `@SpringBootTest` smoke test (`CreateTransactionEndToEndTests`) exercises the full real stack (real Postgres, real correlation-ID filter, real JWT-secured filter chain, real controller, real persistence) for the create-transaction happy path, including asserting the JWT subject reaches the persisted audit row — to catch wiring mistakes a mocked-use-case slice test cannot. Every `@SpringBootTest`/`@WebMvcTest` that loads `security.SecurityConfig` mocks the `JwtDecoder` bean (`@MockitoBean`) purely to avoid a startup-time network call or a real issuer dependency — actual authentication in tests is driven by `jwt()`, not the decoder. Testcontainers-based tests provision their own PostgreSQL container via `TestcontainersConfiguration` and do not depend on, or interact with, the `compose.yaml` database described under [Docker](#docker) — the two are independent container lifecycles, and Docker must be running for either. The testing pyramid, required test types per layer, and the required test list are defined in [Part 6A – Operations, 45](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6A_Operations.md) and [TDS 70](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#70-recommended-first-implementation-slice).
 
 ## API Documentation
 
-The API is versioned under `/api/v1`. OpenAPI/Swagger generation (`springdoc-openapi`) is specified in the architecture but deliberately deferred, consistent with `feature/security` (see [Part 6B, ADR register](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6B_Governance_and_Reference.md)).
+The API is versioned under `/api/v1`. Every endpoint below requires a valid JWT bearer token and the listed authority — see [Security](#security). OpenAPI/Swagger generation (`springdoc-openapi`) is specified in the architecture but remains deliberately deferred.
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `/api/v1/transactions` | `POST` | Create a single transaction. `201` + the created resource (`Location` header), `409` on duplicate, `404` on unknown source/customer, `400` on validation failure. |
-| `/api/v1/customers/{customerId}/summary` | `GET` | Customer income/expenditure/net-cash-flow summary over `?from=&to=` (ISO dates). |
-| `/api/v1/customers/{customerId}/categories` | `GET` | Debit totals grouped by category over the same date range. |
-| `/api/v1/customers/{customerId}/merchants` | `GET` | Debit totals grouped by merchant over the same date range. |
-| `/api/v1/customers/{customerId}/monthly-summary` | `GET` | Income/expenditure/net-cash-flow grouped by month over the same date range. |
+| Endpoint | Method | Required authority | Description |
+|---|---|---|---|
+| `/api/v1/transactions` | `POST` | `TRANSACTION_WRITE` | Create a single transaction. `201` + the created resource (`Location` header), `409` on duplicate, `404` on unknown source/customer, `400` on validation failure, `401`/`403` on auth failure. |
+| `/api/v1/customers/{customerId}/summary` | `GET` | `AGGREGATION_READ` | Customer income/expenditure/net-cash-flow summary over `?from=&to=` (ISO dates). |
+| `/api/v1/customers/{customerId}/categories` | `GET` | `AGGREGATION_READ` | Debit totals grouped by category over the same date range. |
+| `/api/v1/customers/{customerId}/merchants` | `GET` | `AGGREGATION_READ` | Debit totals grouped by merchant over the same date range. |
+| `/api/v1/customers/{customerId}/monthly-summary` | `GET` | `AGGREGATION_READ` | Income/expenditure/net-cash-flow grouped by month over the same date range. |
+| `/actuator/health` | `GET` | *(public)* | Default Boot health endpoint; the only actuator surface exposed today. |
 
 The create-transaction response follows SAD 35.1's shape (including nested `merchant`/`category` objects), which is the authoritative source over TDS 28's narrower documented shape — see [`CLAUDE.md`](CLAUDE.md#documentation-precedence) for how documentation conflicts are resolved. The full, authoritative API contracts (request/response payloads, status codes, filtering, pagination, sorting for the not-yet-implemented endpoints) are documented in [Part 5 – API & Security, 34–35](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) and [TDS Part 6](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#part-6--api-contract).
 
-All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable `errorCode`, `correlationId`, and `timestamp` — see the error catalogue in [SAD 39.4](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) and [TDS 40](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#40-error-codes). One documented gap: `TransactionValidationException` currently maps to a generic `VALIDATION_ERROR` code rather than TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes, since the exception doesn't yet carry which invariant failed — giving it a structured reason is deferred work.
+All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable `errorCode`, `correlationId`, and `timestamp`. Error codes match [SAD 39.4](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) exactly (`TRANSACTION_DUPLICATE`, `SOURCE_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `CATEGORY_NOT_FOUND`, `REQUEST_VALIDATION_FAILED`, `INVALID_DATE_RANGE`, `AUTHENTICATION_REQUIRED`, `TOKEN_INVALID`, `ACCESS_DENIED`, `INTERNAL_SERVER_ERROR`) — a real SAD/TDS naming conflict was found and resolved here in `feature/security` (TDS 40 uses a different `TRX-NNN`/`SEC-NNN` scheme; SAD outranks TDS per [documentation precedence](CLAUDE.md#documentation-precedence)). One documented gap remains: `TransactionValidationException` still maps to a generic `REQUEST_VALIDATION_FAILED` code rather than TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes, since the exception doesn't yet carry which invariant failed — giving it a structured reason is deferred work.
 
 ## Security
 
-**Every endpoint is currently unauthenticated.** `spring-boot-starter-security` and the OAuth2 resource-server starter are on the classpath (added in `feature/project-structure` for the target JWT model) but not yet configured. `config.SecurityConfig` installs a **temporary, explicitly-flagged placeholder** `SecurityFilterChain` that permits every request and disables CSRF (appropriate for a stateless bearer-token REST API with no cookie-based session) — without it, Spring Boot's own default security auto-configuration would instead require HTTP Basic auth with a random per-boot password, which is not the target design either.
+The temporary permit-all posture from `feature/api` has been replaced with the real, documented model (SAD 36, TDS 41–44, ADR-007, ADR-016). Every endpoint requires a valid JWT bearer token; the previous default-auto-configuration risk (HTTP Basic with a random per-boot password) no longer applies either way, since a real `SecurityFilterChain` bean is always defined.
 
-**Do not deploy this application outside local development as-is.** The target model:
+**Authentication** — OAuth2 Resource Server, JWT bearer tokens (`Authorization: Bearer <token>`), validated via Spring Security's standard `NimbusJwtDecoder`:
+- Signature: RS256-restricted by default (`NimbusJwtDecoder`'s own default when built from a JWK set).
+- Issuer, expiry/not-before: Spring's default validator chain (60s clock skew, no custom override).
+- Audience: validated explicitly against `app.security.expected-audience` — Spring's default validator chain does not check `aud` on its own, so this is added by hand in `security.SecurityConfig`.
+- No custom token decoding, no custom cryptography anywhere in this codebase.
 
-- Bearer JWT authentication via `spring-boot-starter-security-oauth2-resource-server`.
-- **Authorities protect individual operations** and are what `@PreAuthorize` evaluates (`TRANSACTION_READ`, `TRANSACTION_WRITE`, `CUSTOMER_READ`, `AGGREGATION_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ` — SAD 36.4).
-- **Roles are named collections of authorities** assigned to a client or user (`ROLE_API_CONSUMER`, `ROLE_SUPPORT`, `ROLE_ADMIN` — TDS 42). A JWT's `roles` claim is expanded into granted authorities at authentication time; role names are never checked directly. The approved role-to-authority mapping is documented in ADR-016 (SAD 49.1).
+**Authorization** — `@PreAuthorize` on each controller method is the single source of authorization truth (`SecurityFilterChain`'s own `authorizeHttpRequests` only distinguishes public vs. authenticated, never repeats an authority check):
+- **Authorities** protect individual operations (`TRANSACTION_READ`, `TRANSACTION_WRITE`, `CUSTOMER_READ`, `AGGREGATION_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ` — SAD 36.4).
+- **Roles** are named collections of authorities assigned to a client (`ROLE_API_CONSUMER`, `ROLE_SUPPORT`, `ROLE_ADMIN` — TDS 42, ADR-016). A JWT's `roles` claim (already `ROLE_`-prefixed) is expanded into granted authorities at authentication time by `security.RoleClaimAuthoritiesConverter`; role names are never checked directly, and an unrecognised role contributes no authorities rather than failing the request outright.
+- See the endpoint table under [API Documentation](#api-documentation) for the exact authority each endpoint requires.
+
+**Errors** — 401/403 responses use the same RFC 9457 shape as every other API error (`security.ProblemDetailAuthenticationEntryPoint`/`ProblemDetailAccessDeniedHandler`), including `correlationId`: `AUTHENTICATION_REQUIRED` (no token), `TOKEN_INVALID` (bad signature/expired/malformed — distinguished via Spring Security's own `BearerTokenError`, not custom parsing), `ACCESS_DENIED` (authenticated but missing the required authority).
+
+**Actor propagation** — the JWT `sub` claim is read via `java.security.Principal.getName()` in `TransactionController` (a JDK type, not a Spring Security one) and flows into `CreateTransactionCommand.actor()`, replacing the earlier `"SYSTEM"` placeholder in audit records. `transaction.application` never imports a Spring Security or JWT type.
+
+**Session/CSRF/CORS** — stateless (`SessionCreationPolicy.STATELESS`), CSRF disabled (no cookie-based session to protect), no CORS configuration (nothing documents a browser-based client — SAD 36.12 says disabled by default in that case).
+
+**Local development** — no external identity provider is documented or required. Run with `./mvnw spring-boot:run -Dspring-boot.run.profiles=local` to activate a local-only symmetric-key `JwtDecoder` (`security.SecurityConfig`'s `local`-profile bean), then mint a matching HS256 test token (e.g. via [jwt.io](https://jwt.io)'s debugger) signed with the published local-only key `local-only-test-signing-key-not-a-real-secret-32bytes-minimum`, including a `roles` claim such as `["ROLE_ADMIN"]`. This key is not a secret and is never used outside the `local` profile. Automated tests don't need this at all — they use Spring Security Test's `jwt()` `MockMvc` request post-processor to construct an already-authenticated principal directly.
+
+**Configuration** — `spring.security.oauth2.resourceserver.jwt.issuer-uri` has **no default value** in the main configuration: an unset `JWT_ISSUER_URI` environment variable makes the application **fail to start**, rather than silently accepting tokens from any/no issuer. No concrete external identity provider is documented anywhere in the SAD/TDS/ADRs, so none is hardcoded — this must be supplied per deployment.
+
+```properties
+spring.security.oauth2.resourceserver.jwt.issuer-uri=${JWT_ISSUER_URI}
+app.security.expected-audience=${JWT_EXPECTED_AUDIENCE:transaction-aggregation-api}
+```
+
 - HTTPS is mandatory outside local development; secrets (DB credentials, JWT signing/verification material) must come from environment variables or a managed secret store, never source control.
-- Actuator endpoint exposure must be explicitly restricted before any shared deployment — liveness/readiness may be public, `metrics`/`env`/`loggers` must not be.
-
-`feature/security` is the recommended next branch: replace `config.SecurityConfig`'s placeholder with real JWT resource-server validation and `@PreAuthorize` on every endpoint per TDS 43's authorization matrix.
+- Actuator endpoint exposure must be explicitly restricted before any shared deployment — today only the default `/actuator/health` is exposed at all (no other actuator endpoint is configured), and it is the one endpoint permitted without authentication, per SAD 36.10.
 
 Full threat model, JWT claim validation rules, and header/CORS policy: [Part 5 – API & Security, 36](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md). Role/authority model: [Part 5, 36.4](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md), [TDS 42](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#42-roles-and-authority-mapping), and ADR-016 ([SAD 49.1](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6B_Governance_and_Reference.md)).
 
@@ -253,7 +277,7 @@ Documentation must be kept in sync with the code — see [`CLAUDE.md`](CLAUDE.md
 
 ## Future Roadmap
 
-**Near-term:** `feature/security` (real JWT authentication, `@PreAuthorize` authorization), bulk transaction ingestion, transaction retrieval/search, OpenAPI/Swagger generation.
+**Near-term:** bulk transaction ingestion, transaction retrieval/search, OpenAPI/Swagger generation, actuator liveness/readiness probes and restricting non-health actuator endpoints, a structured reason on `TransactionValidationException` (to reach TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes instead of the current generic `REQUEST_VALIDATION_FAILED`).
 
 **Functional:** multi-currency support, user-defined categorisation rules, scheduled recurring reports, additional provider integrations, notifications/subscriptions.
 
@@ -282,12 +306,13 @@ Implementation proceeds **one bounded context at a time**, each independently co
 
 ```
 feature/project-structure → feature/shared → feature/customer → feature/merchant →
-feature/categorisation → feature/audit → feature/transaction → feature/aggregation → feature/api
+feature/categorisation → feature/audit → feature/transaction → feature/aggregation →
+feature/api → feature/security
 ```
 
-All branches above are complete. **`feature/security` is the recommended next branch** — see [Security](#security).
+Every branch in the original sequence is now complete.
 
-`feature/project-structure` established only the package skeleton, Spring Modulith module boundaries, architecture verification tests, and shared configuration structure — no business logic. `categorisation` and `audit` were built before `transaction` because the transaction ingestion workflow depends on both (assigning a category and recording an audit event are part of processing a transaction, not features bolted on afterwards). `aggregation` came after `transaction` because it only reads transaction data that must already exist. `api` came last because it wires already-completed use cases to HTTP without introducing new business behaviour. See [`CLAUDE.md`](CLAUDE.md#implementation-rules) for the full rationale. Before implementing a feature:
+`feature/project-structure` established only the package skeleton, Spring Modulith module boundaries, architecture verification tests, and shared configuration structure — no business logic. `categorisation` and `audit` were built before `transaction` because the transaction ingestion workflow depends on both (assigning a category and recording an audit event are part of processing a transaction, not features bolted on afterwards). `aggregation` came after `transaction` because it only reads transaction data that must already exist. `api` wired already-completed use cases to HTTP without introducing new business behaviour, behind a temporary permit-all posture. `feature/security` replaced that posture with the real, documented JWT/RBAC model last, since it needed real HTTP endpoints to secure. See [`CLAUDE.md`](CLAUDE.md#implementation-rules) for the full rationale. Before implementing a feature:
 
 1. Read the relevant sections of `documentation/` for that module.
 2. Confirm the module's package structure, ports, and dependency rules.

@@ -39,15 +39,17 @@ import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSourceRe
  *
  * <p>{@code correlationId} comes from the command (SAD 34.10) - resolved upstream by
  * {@code config.CorrelationIdFilter} from the inbound request, not generated here, so the same
- * id ends up on both the HTTP response and this transaction's audit trail. {@code actor} is
- * still hardcoded to {@code "SYSTEM"} - no security module exists yet to supply a JWT subject.
- * That remains a deliberate, flagged placeholder, not a silent pretence that it's solved.
+ * id ends up on both the HTTP response and this transaction's audit trail. {@code actor} also
+ * comes from the command (SAD 36, TDS's audit field catalogue) - the JWT subject of the
+ * authenticated caller, resolved upstream in {@code api.controller} - replacing the earlier
+ * {@code "SYSTEM"} placeholder now that real authenticated identity exists (see
+ * {@link CreateTransactionCommand}'s own Javadoc for why this module never sees a JWT/Authentication
+ * type directly).
  */
 @Service
 class CreateTransactionService implements CreateTransactionUseCase {
 
 	private static final String AGGREGATE_TYPE = "TRANSACTION";
-	private static final String SYSTEM_ACTOR = "SYSTEM";
 
 	private final TransactionRepositoryPort transactionRepositoryPort;
 	private final TransactionSourceRepositoryPort transactionSourceRepositoryPort;
@@ -100,7 +102,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		Transaction transaction = registerTransaction(command, transactionId, source, merchant, decision, amount, direction, correlationId);
 		Transaction saved = persist(transaction, source, command, correlationId);
 
-		recordSuccess(saved, decision, correlationId);
+		recordSuccess(saved, decision, correlationId, command.actor());
 
 		CategoryView category = getCategoryUseCase.get(decision.categoryId());
 		return toResult(saved, source, merchant, category);
@@ -134,7 +136,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 			}
 			return money;
 		} catch (IllegalArgumentException e) {
-			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, e.getMessage());
+			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, command.actor(), e.getMessage());
 			throw new TransactionValidationException(e.getMessage(), e);
 		}
 	}
@@ -143,7 +145,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		try {
 			return TransactionDirection.valueOf(command.direction());
 		} catch (IllegalArgumentException e) {
-			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, e.getMessage());
+			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, command.actor(), e.getMessage());
 			throw new TransactionValidationException("direction must be CREDIT or DEBIT", e);
 		}
 	}
@@ -151,7 +153,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 	private TransactionSource resolveSource(CreateTransactionCommand command, TransactionId transactionId, CorrelationId correlationId) {
 		Optional<TransactionSource> source = transactionSourceRepositoryPort.findByCode(command.sourceCode());
 		if (source.isEmpty() || !source.get().isActive()) {
-			recordFailure(transactionId, "TRANSACTION_SOURCE_NOT_FOUND", correlationId,
+			recordFailure(transactionId, "TRANSACTION_SOURCE_NOT_FOUND", correlationId, command.actor(),
 					"source code: " + command.sourceCode());
 			throw new TransactionSourceNotFoundException(command.sourceCode());
 		}
@@ -160,7 +162,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 
 	private void validateCustomer(CreateTransactionCommand command, TransactionId transactionId, CorrelationId correlationId) {
 		if (!customerExistsPort.exists(command.customerId())) {
-			recordFailure(transactionId, "TRANSACTION_CUSTOMER_NOT_FOUND", correlationId,
+			recordFailure(transactionId, "TRANSACTION_CUSTOMER_NOT_FOUND", correlationId, command.actor(),
 					"customer id: " + command.customerId());
 			throw new CustomerNotFoundException(command.customerId());
 		}
@@ -171,7 +173,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 				.findBySourceIdAndExternalTransactionId(source.id(), command.externalTransactionId())
 				.isPresent();
 		if (exists) {
-			recordFailure(transactionId, "TRANSACTION_DUPLICATE_REJECTED", correlationId,
+			recordFailure(transactionId, "TRANSACTION_DUPLICATE_REJECTED", correlationId, command.actor(),
 					"source: " + command.sourceCode() + ", externalTransactionId: " + command.externalTransactionId());
 			throw new DuplicateTransactionException(source.id().value(), command.externalTransactionId());
 		}
@@ -214,7 +216,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 					command.occurredAt(),
 					clock);
 		} catch (IllegalArgumentException e) {
-			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, e.getMessage());
+			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, command.actor(), e.getMessage());
 			throw new TransactionValidationException(e.getMessage(), e);
 		}
 	}
@@ -223,26 +225,26 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		try {
 			return transactionRepositoryPort.save(transaction);
 		} catch (DuplicateTransactionException e) {
-			recordFailure(transaction.id(), "TRANSACTION_DUPLICATE_REJECTED", correlationId,
+			recordFailure(transaction.id(), "TRANSACTION_DUPLICATE_REJECTED", correlationId, command.actor(),
 					"source: " + source.code() + ", externalTransactionId: " + command.externalTransactionId());
 			throw e;
 		}
 	}
 
-	private void recordSuccess(Transaction transaction, CategorisationDecision decision, CorrelationId correlationId) {
+	private void recordSuccess(Transaction transaction, CategorisationDecision decision, CorrelationId correlationId, String actor) {
 		Map<String, Object> eventData = new HashMap<>();
 		eventData.put("categoryId", decision.categoryId().toString());
 		eventData.put("matchedRuleId", decision.matchedRuleId() == null ? null : decision.matchedRuleId().toString());
 		eventData.put("reason", decision.reason());
 		recordAuditEventUseCase.record(new RecordAuditEventCommand(
-				AGGREGATE_TYPE, transaction.id().value(), "TRANSACTION_CREATED", SYSTEM_ACTOR, correlationId, toJson(eventData)));
+				AGGREGATE_TYPE, transaction.id().value(), "TRANSACTION_CREATED", actor, correlationId, toJson(eventData)));
 	}
 
-	private void recordFailure(TransactionId transactionId, String eventType, CorrelationId correlationId, String reason) {
+	private void recordFailure(TransactionId transactionId, String eventType, CorrelationId correlationId, String actor, String reason) {
 		Map<String, Object> eventData = new HashMap<>();
 		eventData.put("reason", reason);
 		recordAuditEventUseCase.record(new RecordAuditEventCommand(
-				AGGREGATE_TYPE, transactionId.value(), eventType, SYSTEM_ACTOR, correlationId, toJson(eventData)));
+				AGGREGATE_TYPE, transactionId.value(), eventType, actor, correlationId, toJson(eventData)));
 	}
 
 	private String toJson(Map<String, Object> data) {
