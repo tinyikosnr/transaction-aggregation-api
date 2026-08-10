@@ -2,6 +2,7 @@ package za.co.tinyiko.transactionaggregation.api.controller;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -26,8 +27,16 @@ import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransa
 import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.CustomerNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
+import za.co.tinyiko.transactionaggregation.transaction.application.GetTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.transaction.application.PagedResult;
+import za.co.tinyiko.transactionaggregation.transaction.application.SearchTransactionsUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionCreatedResult;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionDetails;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionNotFoundException;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSearchCriteria;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSearchResultItem;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSourceNotFoundException;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionValidationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,6 +44,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -69,6 +79,12 @@ class TransactionControllerTests {
 	private CreateTransactionUseCase createTransactionUseCase;
 
 	@MockitoBean
+	private GetTransactionUseCase getTransactionUseCase;
+
+	@MockitoBean
+	private SearchTransactionsUseCase searchTransactionsUseCase;
+
+	@MockitoBean
 	private JwtDecoder jwtDecoder;
 
 	private static CreateTransactionRequest aRequest() {
@@ -86,6 +102,23 @@ class TransactionControllerTests {
 
 	private static RequestPostProcessor transactionWriteToken() {
 		return jwt().jwt(builder -> builder.subject(ACTOR)).authorities(new SimpleGrantedAuthority("TRANSACTION_WRITE"));
+	}
+
+	private static RequestPostProcessor transactionReadToken() {
+		return jwt().jwt(builder -> builder.subject(ACTOR)).authorities(new SimpleGrantedAuthority("TRANSACTION_READ"));
+	}
+
+	private static TransactionDetails aDetails(UUID id) {
+		UUID merchantId = UUID.randomUUID();
+		return new TransactionDetails(id, UUID.randomUUID(), "MOCK_BANK_A", "EXT-001",
+				merchantId, "Checkers", "GROCERIES", "Groceries", new BigDecimal("125.50"), "ZAR", "DEBIT",
+				"groceries", "PROCESSED", Instant.parse("2026-08-06T08:00:00Z"),
+				Instant.parse("2026-08-06T08:00:01Z"), Instant.parse("2026-08-06T08:00:01Z"));
+	}
+
+	private static TransactionSearchResultItem aSearchResultItem() {
+		return new TransactionSearchResultItem(UUID.randomUUID(), UUID.randomUUID(), "Checkers", "GROCERIES",
+				new BigDecimal("125.50"), "ZAR", "DEBIT", Instant.parse("2026-08-06T08:00:00Z"));
 	}
 
 	@Test
@@ -248,6 +281,118 @@ class TransactionControllerTests {
 						.with(jwt().jwt(builder -> builder.subject(ACTOR)).authorities(new SimpleGrantedAuthority("AGGREGATION_READ")))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(objectMapper.writeValueAsString(request)))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
+	}
+
+	@Test
+	void getReturnsTheTransactionWhenFound() throws Exception {
+		UUID id = UUID.randomUUID();
+		when(getTransactionUseCase.get(id)).thenReturn(aDetails(id));
+
+		mockMvc.perform(get("/api/v1/transactions/{id}", id).with(transactionReadToken()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.id").value(id.toString()))
+				.andExpect(jsonPath("$.merchant.displayName").value("Checkers"))
+				.andExpect(jsonPath("$.category.code").value("GROCERIES"))
+				.andExpect(jsonPath("$.status").value("PROCESSED"));
+	}
+
+	@Test
+	void getReturnsNotFoundWithTransactionNotFoundWhenNoTransactionMatches() throws Exception {
+		UUID id = UUID.randomUUID();
+		when(getTransactionUseCase.get(id)).thenThrow(new TransactionNotFoundException(id));
+
+		mockMvc.perform(get("/api/v1/transactions/{id}", id).with(transactionReadToken()))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.errorCode").value("TRANSACTION_NOT_FOUND"));
+	}
+
+	@Test
+	void getReturnsUnauthorizedWhenNoTokenIsSupplied() throws Exception {
+		mockMvc.perform(get("/api/v1/transactions/{id}", UUID.randomUUID()))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
+	}
+
+	@Test
+	void getReturnsForbiddenWhenTheAuthorityIsMissing() throws Exception {
+		mockMvc.perform(get("/api/v1/transactions/{id}", UUID.randomUUID())
+						.with(transactionWriteToken()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
+	}
+
+	@Test
+	void searchReturnsAPageOfResultsWithDefaultPagination() throws Exception {
+		PagedResult<TransactionSearchResultItem> result = new PagedResult<>(List.of(aSearchResultItem()), 0, 20, 1, 1);
+		when(searchTransactionsUseCase.search(any())).thenReturn(result);
+
+		mockMvc.perform(get("/api/v1/transactions").with(transactionReadToken()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content[0].merchantName").value("Checkers"))
+				.andExpect(jsonPath("$.content[0].categoryCode").value("GROCERIES"))
+				.andExpect(jsonPath("$.page.number").value(0))
+				.andExpect(jsonPath("$.page.size").value(20))
+				.andExpect(jsonPath("$.page.totalElements").value(1))
+				.andExpect(jsonPath("$.page.totalPages").value(1));
+	}
+
+	@Test
+	void searchPassesQueryParametersThroughToTheCriteria() throws Exception {
+		UUID customerId = UUID.randomUUID();
+		UUID merchantId = UUID.randomUUID();
+		when(searchTransactionsUseCase.search(any())).thenReturn(new PagedResult<>(List.of(), 1, 10, 0, 0));
+
+		mockMvc.perform(get("/api/v1/transactions")
+						.with(transactionReadToken())
+						.param("customerId", customerId.toString())
+						.param("sourceCode", "MOCK_BANK_A")
+						.param("categoryCode", "GROCERIES")
+						.param("merchantId", merchantId.toString())
+						.param("direction", "DEBIT")
+						.param("status", "PROCESSED")
+						.param("occurredFrom", "2026-01-01T00:00:00Z")
+						.param("occurredTo", "2026-01-31T23:59:59Z")
+						.param("page", "1")
+						.param("size", "10")
+						.param("sort", "transactionTimestamp,asc"))
+				.andExpect(status().isOk());
+
+		ArgumentCaptor<TransactionSearchCriteria> captor = ArgumentCaptor.forClass(TransactionSearchCriteria.class);
+		verify(searchTransactionsUseCase).search(captor.capture());
+		TransactionSearchCriteria criteria = captor.getValue();
+		assertThat(criteria.customerId()).isEqualTo(customerId);
+		assertThat(criteria.sourceCode()).isEqualTo("MOCK_BANK_A");
+		assertThat(criteria.categoryCode()).isEqualTo("GROCERIES");
+		assertThat(criteria.merchantId()).isEqualTo(merchantId);
+		assertThat(criteria.direction()).isEqualTo("DEBIT");
+		assertThat(criteria.status()).isEqualTo("PROCESSED");
+		assertThat(criteria.page()).isEqualTo(1);
+		assertThat(criteria.size()).isEqualTo(10);
+		assertThat(criteria.sort()).isEqualTo("transactionTimestamp,asc");
+	}
+
+	@Test
+	void searchReturnsBadRequestWhenTheUseCaseSignalsAValidationFailure() throws Exception {
+		when(searchTransactionsUseCase.search(any()))
+				.thenThrow(new TransactionValidationException("size must be between 1 and 100", null));
+
+		mockMvc.perform(get("/api/v1/transactions").with(transactionReadToken()).param("size", "0"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.errorCode").value("REQUEST_VALIDATION_FAILED"));
+	}
+
+	@Test
+	void searchReturnsUnauthorizedWhenNoTokenIsSupplied() throws Exception {
+		mockMvc.perform(get("/api/v1/transactions"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
+	}
+
+	@Test
+	void searchReturnsForbiddenWhenTheAuthorityIsMissing() throws Exception {
+		mockMvc.perform(get("/api/v1/transactions").with(transactionWriteToken()))
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
 	}

@@ -1,5 +1,6 @@
 package za.co.tinyiko.transactionaggregation.categorisation.persistence;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -71,6 +72,30 @@ class JpaCategoryRepositoryAdapterTests {
 		Optional<TransactionCategory> found = adapter.findById(new TransactionCategoryId(UUID.randomUUID()));
 
 		assertThat(found).isEmpty();
+	}
+
+	@Test
+	void findByCodeReturnsTheMatchingSeededCategory() {
+		TransactionCategory fallback = adapter.findFallback().orElseThrow();
+
+		Optional<TransactionCategory> found = adapter.findByCode(fallback.code());
+
+		assertThat(found).isPresent();
+		assertThat(found.get().id()).isEqualTo(fallback.id());
+	}
+
+	@Test
+	void findByCodeReturnsEmptyForAnUnknownCode() {
+		assertThat(adapter.findByCode("NO-SUCH-CODE")).isEmpty();
+	}
+
+	@Test
+	void findByIdsReturnsOnlyTheMatchingCategoriesInOneBatch() {
+		TransactionCategory fallback = adapter.findFallback().orElseThrow();
+
+		List<TransactionCategory> found = adapter.findByIds(List.of(fallback.id(), new TransactionCategoryId(UUID.randomUUID())));
+
+		assertThat(found).containsExactly(fallback);
 	}
 
 }

@@ -2,7 +2,7 @@
 
 A modular-monolith Spring Boot service that ingests financial transactions from multiple upstream sources, validates and categorises them, and exposes REST APIs for retrieval and financial aggregation.
 
-> **Status:** All planned bounded contexts are implemented and secured (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api` → `security`). The REST API is wired up, authenticated via JWT bearer tokens, and authorized per SAD 36.4/TDS 42/ADR-016, tested end-to-end. The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
+> **Status:** All planned bounded contexts are implemented and secured (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api` → `security`), plus one post-MVP branch, `feature/transaction-query`, adding transaction retrieval and search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions`). The REST API is wired up, authenticated via JWT bearer tokens, and authorized per SAD 36.4/TDS 42/ADR-016, tested end-to-end. The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
 
 ---
 
@@ -79,6 +79,7 @@ See [`Solution_Architecture_Document(SAD)_v_2_Part_6B_Governance_and_Reference.m
 ## Implemented Capabilities
 
 - Single transaction ingestion (`POST /api/v1/transactions`): validation, duplicate detection (application pre-check + database unique-constraint fallback), merchant resolution, rule-based categorisation, persistence, and an audit event — all within one transactional use case.
+- Transaction retrieval by id (`GET /api/v1/transactions/{id}`) and filtered, paginated, sorted transaction search (`GET /api/v1/transactions`) — customer/source/category/merchant/direction/status/date-range filters, sorting restricted to the one documented sortable field (`transactionTimestamp`), enrichment done via batch (not per-row) cross-module lookups to avoid N+1.
 - Configurable, priority-ordered categorisation rules (merchant and description matching) with a seeded fallback category.
 - Merchant name normalisation and find-or-create resolution.
 - Customer, category, merchant, and monthly financial summaries (`GET /api/v1/customers/{customerId}/{summary|categories|merchants|monthly-summary}`), computed read-only from persisted transaction data over a caller-supplied date range.
@@ -89,7 +90,7 @@ See [`Solution_Architecture_Document(SAD)_v_2_Part_6B_Governance_and_Reference.m
 
 **Not yet implemented** (documented in the SAD/TDS but out of scope so far — see [`CLAUDE.md`](CLAUDE.md) for the exact exclusion rationale):
 
-- Bulk transaction ingestion, transaction retrieval/search (`GET /api/v1/transactions/**`).
+- Bulk transaction ingestion.
 - Any customer/merchant/categorisation-admin/audit CRUD or read endpoint (no documented HTTP contract, or no backing use case, for any of these today) — the authorities for them (`CUSTOMER_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ`) are defined in the approved mapping but have nothing to attach to yet.
 - OpenAPI/Swagger generation.
 - Actuator liveness/readiness probes (only the default `/actuator/health` is exposed today) and restricting `/actuator/metrics`/`/env`/`/loggers`.
@@ -116,7 +117,8 @@ transaction-aggregation-api
 │   └── shared/                      event (DomainEventEnvelope), logging (CorrelationId)
 ├── src/main/resources/
 │   ├── application.properties
-│   └── db/migration/               V1–V10 (customers, merchants, categorisation, audit, transactions + seeds)
+│   └── db/migration/               V1–V11 (customers, merchants, categorisation, audit, transactions + seeds,
+│                                    transaction-search composite indexes)
 ├── src/test/java/.../             Unit, repository (Testcontainers), @WebMvcTest slice, one full
 │                                    end-to-end smoke test, and architecture verification tests
 ├── compose.yaml                   Local PostgreSQL for development/tests
@@ -193,6 +195,7 @@ Flyway (`flyway-database-postgresql`) runs automatically against the configured 
 | `V8` | `transaction_sources` table |
 | `V9` | `transactions` table |
 | `V10` | Seed `transaction_sources` |
+| `V11` | Composite indexes for transaction search: `(category_id, occurred_at)`, `(merchant_id, occurred_at)`, replacing the prior single-column indexes |
 
 Applied migrations are immutable; schema changes are always additive new migration files. See [Part 4 – Domain & Data, 29.5](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_4_Domain_and_Data.md) for full rules.
 
@@ -212,6 +215,8 @@ The API is versioned under `/api/v1`. Every endpoint below requires a valid JWT 
 | Endpoint | Method | Required authority | Description |
 |---|---|---|---|
 | `/api/v1/transactions` | `POST` | `TRANSACTION_WRITE` | Create a single transaction. `201` + the created resource (`Location` header), `409` on duplicate, `404` on unknown source/customer, `400` on validation failure, `401`/`403` on auth failure. |
+| `/api/v1/transactions/{id}` | `GET` | `TRANSACTION_READ` | Retrieve a single transaction by id, fully enriched with merchant/category data. `200`, `404` if unknown, `401`/`403` on auth failure. |
+| `/api/v1/transactions` | `GET` | `TRANSACTION_READ` | Filtered, paginated, sorted transaction search — `customerId`/`sourceCode`/`categoryCode`/`merchantId`/`direction`/`status`/`occurredFrom`/`occurredTo`/`page`/`size`/`sort` query params; `sort` accepts only `transactionTimestamp` (asc/desc). `200` with a paginated envelope, `400` on any validation failure, `401`/`403` on auth failure. |
 | `/api/v1/customers/{customerId}/summary` | `GET` | `AGGREGATION_READ` | Customer income/expenditure/net-cash-flow summary over `?from=&to=` (ISO dates). |
 | `/api/v1/customers/{customerId}/categories` | `GET` | `AGGREGATION_READ` | Debit totals grouped by category over the same date range. |
 | `/api/v1/customers/{customerId}/merchants` | `GET` | `AGGREGATION_READ` | Debit totals grouped by merchant over the same date range. |
@@ -220,7 +225,7 @@ The API is versioned under `/api/v1`. Every endpoint below requires a valid JWT 
 
 The create-transaction response follows SAD 35.1's shape (including nested `merchant`/`category` objects), which is the authoritative source over TDS 28's narrower documented shape — see [`CLAUDE.md`](CLAUDE.md#documentation-precedence) for how documentation conflicts are resolved. The full, authoritative API contracts (request/response payloads, status codes, filtering, pagination, sorting for the not-yet-implemented endpoints) are documented in [Part 5 – API & Security, 34–35](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) and [TDS Part 6](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#part-6--api-contract).
 
-All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable `errorCode`, `correlationId`, and `timestamp`. Error codes match [SAD 39.4](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) exactly (`TRANSACTION_DUPLICATE`, `SOURCE_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `CATEGORY_NOT_FOUND`, `REQUEST_VALIDATION_FAILED`, `INVALID_DATE_RANGE`, `AUTHENTICATION_REQUIRED`, `TOKEN_INVALID`, `ACCESS_DENIED`, `INTERNAL_SERVER_ERROR`) — a real SAD/TDS naming conflict was found and resolved here in `feature/security` (TDS 40 uses a different `TRX-NNN`/`SEC-NNN` scheme; SAD outranks TDS per [documentation precedence](CLAUDE.md#documentation-precedence)). One documented gap remains: `TransactionValidationException` still maps to a generic `REQUEST_VALIDATION_FAILED` code rather than TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes, since the exception doesn't yet carry which invariant failed — giving it a structured reason is deferred work.
+All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable `errorCode`, `correlationId`, and `timestamp`. Error codes match [SAD 39.4](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) exactly (`TRANSACTION_DUPLICATE`, `SOURCE_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `CATEGORY_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `REQUEST_VALIDATION_FAILED`, `INVALID_DATE_RANGE`, `AUTHENTICATION_REQUIRED`, `TOKEN_INVALID`, `ACCESS_DENIED`, `INTERNAL_SERVER_ERROR`) — a real SAD/TDS naming conflict was found and resolved here in `feature/security` (TDS 40 uses a different `TRX-NNN`/`SEC-NNN` scheme; SAD outranks TDS per [documentation precedence](CLAUDE.md#documentation-precedence)). One documented gap remains: `TransactionValidationException` still maps to a generic `REQUEST_VALIDATION_FAILED` code rather than TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes, since the exception doesn't yet carry which invariant failed — giving it a structured reason is deferred work.
 
 ## Security
 
@@ -277,7 +282,7 @@ Documentation must be kept in sync with the code — see [`CLAUDE.md`](CLAUDE.md
 
 ## Future Roadmap
 
-**Near-term:** bulk transaction ingestion, transaction retrieval/search, OpenAPI/Swagger generation, actuator liveness/readiness probes and restricting non-health actuator endpoints, a structured reason on `TransactionValidationException` (to reach TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes instead of the current generic `REQUEST_VALIDATION_FAILED`).
+**Near-term:** bulk transaction ingestion, OpenAPI/Swagger generation, actuator liveness/readiness probes and restricting non-health actuator endpoints, a structured reason on `TransactionValidationException` (to reach TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes instead of the current generic `REQUEST_VALIDATION_FAILED`).
 
 **Functional:** multi-currency support, user-defined categorisation rules, scheduled recurring reports, additional provider integrations, notifications/subscriptions.
 
@@ -310,9 +315,9 @@ feature/categorisation → feature/audit → feature/transaction → feature/agg
 feature/api → feature/security
 ```
 
-Every branch in the original sequence is now complete.
+Every branch in the original sequence is now complete, plus one post-MVP branch: `feature/transaction-query`, adding transaction retrieval/search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions` — FR-08, UC-03, UC-04, TDS 30-31) on top of the already-secured API.
 
-`feature/project-structure` established only the package skeleton, Spring Modulith module boundaries, architecture verification tests, and shared configuration structure — no business logic. `categorisation` and `audit` were built before `transaction` because the transaction ingestion workflow depends on both (assigning a category and recording an audit event are part of processing a transaction, not features bolted on afterwards). `aggregation` came after `transaction` because it only reads transaction data that must already exist. `api` wired already-completed use cases to HTTP without introducing new business behaviour, behind a temporary permit-all posture. `feature/security` replaced that posture with the real, documented JWT/RBAC model last, since it needed real HTTP endpoints to secure. See [`CLAUDE.md`](CLAUDE.md#implementation-rules) for the full rationale. Before implementing a feature:
+`feature/project-structure` established only the package skeleton, Spring Modulith module boundaries, architecture verification tests, and shared configuration structure — no business logic. `categorisation` and `audit` were built before `transaction` because the transaction ingestion workflow depends on both (assigning a category and recording an audit event are part of processing a transaction, not features bolted on afterwards). `aggregation` came after `transaction` because it only reads transaction data that must already exist. `api` wired already-completed use cases to HTTP without introducing new business behaviour, behind a temporary permit-all posture. `feature/security` replaced that posture with the real, documented JWT/RBAC model last, since it needed real HTTP endpoints to secure. `feature/transaction-query` came after all ten, as the first post-MVP gap-analysis-driven branch, adding two new `TRANSACTION_READ`-protected read endpoints and the batch (not per-row) cross-module enrichment lookups they need. See [`CLAUDE.md`](CLAUDE.md#implementation-rules) for the full rationale. Before implementing a feature:
 
 1. Read the relevant sections of `documentation/` for that module.
 2. Confirm the module's package structure, ports, and dependency rules.

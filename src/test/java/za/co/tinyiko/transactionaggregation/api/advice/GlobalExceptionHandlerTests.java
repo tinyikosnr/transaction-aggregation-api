@@ -13,6 +13,7 @@ import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryN
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
 import za.co.tinyiko.transactionaggregation.transaction.application.CustomerNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSourceNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionValidationException;
 
@@ -53,6 +54,15 @@ class GlobalExceptionHandlerTests {
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "SOURCE_NOT_FOUND");
+	}
+
+	@Test
+	void mapsTransactionNotFoundToNotFoundWithTransactionNotFoundCode() {
+		ResponseEntity<ProblemDetail> response = handler.handleTransactionNotFound(
+				new TransactionNotFoundException(UUID.randomUUID()), requestWithCorrelationId());
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(response.getBody().getProperties()).containsEntry("errorCode", "TRANSACTION_NOT_FOUND");
 	}
 
 	@Test

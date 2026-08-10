@@ -1,6 +1,9 @@
 package za.co.tinyiko.transactionaggregation.merchant.persistence;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
@@ -8,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import za.co.tinyiko.transactionaggregation.merchant.application.DuplicateMerchantException;
 import za.co.tinyiko.transactionaggregation.merchant.domain.Merchant;
+import za.co.tinyiko.transactionaggregation.merchant.domain.MerchantId;
 import za.co.tinyiko.transactionaggregation.merchant.mapper.MerchantMapper;
 import za.co.tinyiko.transactionaggregation.merchant.port.MerchantRepositoryPort;
 
@@ -41,6 +45,14 @@ class JpaMerchantRepositoryAdapter implements MerchantRepositoryPort {
 	public Optional<Merchant> findByNormalisedName(String normalisedName) {
 		return springDataMerchantRepository.findByNormalisedName(normalisedName)
 				.map(MerchantMapper::toDomain);
+	}
+
+	@Override
+	public List<Merchant> findByIds(Collection<MerchantId> ids) {
+		List<UUID> rawIds = ids.stream().map(MerchantId::value).toList();
+		return springDataMerchantRepository.findAllById(rawIds).stream()
+				.map(MerchantMapper::toDomain)
+				.toList();
 	}
 
 }

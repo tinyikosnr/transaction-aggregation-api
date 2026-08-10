@@ -9,4 +9,6 @@ interface SpringDataTransactionCategoryRepository extends JpaRepository<Transact
 
 	Optional<TransactionCategoryEntity> findFirstByFallbackTrue();
 
+	Optional<TransactionCategoryEntity> findByCode(String code);
+
 }

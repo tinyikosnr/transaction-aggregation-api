@@ -1,6 +1,9 @@
 package za.co.tinyiko.transactionaggregation.categorisation.persistence;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.stereotype.Component;
 
@@ -28,6 +31,20 @@ class JpaCategoryRepositoryAdapter implements CategoryRepositoryPort {
 	public Optional<TransactionCategory> findById(TransactionCategoryId id) {
 		return springDataTransactionCategoryRepository.findById(id.value())
 				.map(TransactionCategoryMapper::toDomain);
+	}
+
+	@Override
+	public Optional<TransactionCategory> findByCode(String code) {
+		return springDataTransactionCategoryRepository.findByCode(code)
+				.map(TransactionCategoryMapper::toDomain);
+	}
+
+	@Override
+	public List<TransactionCategory> findByIds(Collection<TransactionCategoryId> ids) {
+		List<UUID> rawIds = ids.stream().map(TransactionCategoryId::value).toList();
+		return springDataTransactionCategoryRepository.findAllById(rawIds).stream()
+				.map(TransactionCategoryMapper::toDomain)
+				.toList();
 	}
 
 }
