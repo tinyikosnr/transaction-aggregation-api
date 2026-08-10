@@ -47,4 +47,11 @@ class JpaCategoryRepositoryAdapter implements CategoryRepositoryPort {
 				.toList();
 	}
 
+	@Override
+	public List<TransactionCategory> findAll() {
+		return springDataTransactionCategoryRepository.findAll().stream()
+				.map(TransactionCategoryMapper::toDomain)
+				.toList();
+	}
+
 }

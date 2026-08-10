@@ -1,6 +1,8 @@
 package za.co.tinyiko.transactionaggregation.categorisation.mapper;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -65,6 +67,58 @@ class CategorisationRuleMapperTests {
 
 		assertThat(rule.active()).isFalse();
 		assertThat(rule.matches(null, "anything", Direction.CREDIT)).isTrue();
+	}
+
+	@Test
+	void toEntityMapsAllFieldsIncludingTimestamps() {
+		Clock clock = Clock.fixed(Instant.parse("2026-08-10T08:15:00Z"), ZoneOffset.UTC);
+		CategorisationRule rule = CategorisationRule.register(CategorisationRuleId.generate(), TransactionCategoryId.generate(),
+				MatchField.MERCHANT, MatchOperator.CONTAINS, "SHELL", Direction.DEBIT, 30, clock);
+
+		CategorisationRuleEntity entity = CategorisationRuleMapper.toEntity(rule);
+
+		assertThat(entity.getId()).isEqualTo(rule.id().value());
+		assertThat(entity.getCategoryId()).isEqualTo(rule.categoryId().value());
+		assertThat(entity.getMatchField()).isEqualTo(MatchField.MERCHANT);
+		assertThat(entity.getOperator()).isEqualTo(MatchOperator.CONTAINS);
+		assertThat(entity.getMatchValue()).isEqualTo("SHELL");
+		assertThat(entity.getDirection()).isEqualTo(Direction.DEBIT);
+		assertThat(entity.getPriority()).isEqualTo(30);
+		assertThat(entity.isActive()).isTrue();
+		assertThat(entity.getCreatedAt()).isEqualTo(Instant.parse("2026-08-10T08:15:00Z"));
+		assertThat(entity.getUpdatedAt()).isEqualTo(Instant.parse("2026-08-10T08:15:00Z"));
+	}
+
+	@Test
+	void applyToMutatesTheExistingEntityInPlaceWithoutTouchingCreatedAt() {
+		CategorisationRuleEntity entity = new CategorisationRuleEntity();
+		Instant originalCreatedAt = Instant.parse("2026-01-01T00:00:00Z");
+		entity.setId(UUID.randomUUID());
+		entity.setCategoryId(UUID.randomUUID());
+		entity.setMatchField(MatchField.MERCHANT);
+		entity.setOperator(MatchOperator.CONTAINS);
+		entity.setMatchValue("OLD");
+		entity.setDirection(Direction.DEBIT);
+		entity.setPriority(10);
+		entity.setActive(true);
+		entity.setCreatedAt(originalCreatedAt);
+		entity.setUpdatedAt(originalCreatedAt);
+
+		Clock updateClock = Clock.fixed(Instant.parse("2026-08-10T09:00:00Z"), ZoneOffset.UTC);
+		CategorisationRule updatedFields = CategorisationRule.update(new CategorisationRuleId(entity.getId()),
+				new TransactionCategoryId(entity.getCategoryId()), MatchField.DESCRIPTION, MatchOperator.REGEX,
+				"NEW", Direction.CREDIT, 999, false, updateClock);
+
+		CategorisationRuleMapper.applyTo(entity, updatedFields);
+
+		assertThat(entity.getMatchField()).isEqualTo(MatchField.DESCRIPTION);
+		assertThat(entity.getOperator()).isEqualTo(MatchOperator.REGEX);
+		assertThat(entity.getMatchValue()).isEqualTo("NEW");
+		assertThat(entity.getDirection()).isEqualTo(Direction.CREDIT);
+		assertThat(entity.getPriority()).isEqualTo(999);
+		assertThat(entity.isActive()).isFalse();
+		assertThat(entity.getCreatedAt()).isEqualTo(originalCreatedAt);
+		assertThat(entity.getUpdatedAt()).isEqualTo(Instant.parse("2026-08-10T09:00:00Z"));
 	}
 
 }

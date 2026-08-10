@@ -86,6 +86,43 @@ public final class CategorisationRule {
 		return new CategorisationRule(id, categoryId, matchField, operator, upperMatchValue, direction, priority, true, now, now);
 	}
 
+	/**
+	 * Builds a validated rule for an <em>existing</em> id (feature/category-admin's rule update
+	 * capability) - the same field-level invariants {@link #register} enforces (non-blank/bounded
+	 * {@code matchValue}, positive {@code priority}), but taking the caller's own {@code id}
+	 * rather than generating one, and an explicit {@code active} rather than always {@code true}.
+	 * Deliberately still framework/persistence-free: {@code optimistic-locking version} is not a
+	 * parameter here and never will be - that stays entirely at the persistence layer (see
+	 * {@code categorisation.port.CategorisationRuleRow}), this factory only ever produces the
+	 * same version-free aggregate {@link #register}/{@link #reconstitute} already produce.
+	 */
+	public static CategorisationRule update(
+			CategorisationRuleId id,
+			TransactionCategoryId categoryId,
+			MatchField matchField,
+			MatchOperator operator,
+			String matchValue,
+			Direction direction,
+			int priority,
+			boolean active,
+			Clock clock
+	) {
+		Objects.requireNonNull(id, "id must not be null");
+		Objects.requireNonNull(categoryId, "categoryId must not be null");
+		Objects.requireNonNull(matchField, "matchField must not be null");
+		Objects.requireNonNull(operator, "operator must not be null");
+		Objects.requireNonNull(direction, "direction must not be null");
+		Objects.requireNonNull(clock, "clock must not be null");
+		String validatedMatchValue = requireValidMatchValue(matchValue);
+		if (priority <= 0) {
+			throw new IllegalArgumentException("priority must be positive");
+		}
+
+		Instant now = Instant.now(clock);
+		String upperMatchValue = validatedMatchValue.toUpperCase(Locale.ROOT);
+		return new CategorisationRule(id, categoryId, matchField, operator, upperMatchValue, direction, priority, active, now, now);
+	}
+
 	public static CategorisationRule reconstitute(
 			CategorisationRuleId id,
 			TransactionCategoryId categoryId,

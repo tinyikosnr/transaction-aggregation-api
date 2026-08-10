@@ -75,22 +75,29 @@ Base package: `za.co.tinyiko.transactionaggregation`. The 10 top-level module pa
 ```
 za.co.tinyiko.transactionaggregation
 ├── api                     # shared presentation layer: controllers, request/response DTOs, exception advice
-│   ├── controller           TransactionController (create/createBulk/get/search), AggregationController
-│   │                          (package-private, thin)
+│   ├── controller           TransactionController (create/createBulk/get/search), AggregationController,
+│   │                          CategoryAdminController (categories: list/get; rules: list/get/create/update -
+│   │                          package-private, thin)
 │   ├── dto
 │   │   ├── request           CreateTransactionRequest, BulkCreateTransactionsRequest (transactions list
-│   │   │                      deliberately not @Valid-cascaded - see feature/transaction-bulk note below)
+│   │   │                      deliberately not @Valid-cascaded - see feature/transaction-bulk note below),
+│   │   │                      CreateCategorisationRuleRequest, UpdateCategorisationRuleRequest (active/
+│   │   │                      expectedVersion boxed Boolean/Long, not primitive - see feature/category-admin below)
 │   │   └── response          TransactionResponse, TransactionSearchResponse (+ nested PageInfo),
 │   │                          TransactionSearchItemResponse, BulkTransactionResponse, BulkTransactionItemResponse,
 │   │                          CustomerSummaryResponse, CategorySummaryResponse,
-│   │                          MerchantSummaryResponse, MonthlySummaryResponse
+│   │                          MerchantSummaryResponse, MonthlySummaryResponse,
+│   │                          CategoryResponse (read-only, no version), CategorisationRuleResponse (carries version)
 │   ├── mapper                TransactionApiMapper (toResponse overloaded for TransactionCreatedResult and
 │   │                          TransactionDetails, plus toSearchResponse, toBulkCommand, toBulkResponse),
-│   │                          AggregationApiMapper (pure structural mapping, static)
+│   │                          AggregationApiMapper (pure structural mapping, static),
+│   │                          CategoryAdminApiMapper (pure structural mapping, static)
 │   └── advice                GlobalExceptionHandler (RFC 9457 ProblemDetail; error codes match SAD 39.4
 │                               exactly, not TDS 40's TRX-NNN/SEC-NNN scheme - see Documentation Precedence;
 │                               TRANSACTION_NOT_FOUND added in feature/transaction-query; no changes needed
-│                               for feature/transaction-bulk - see below)
+│                               for feature/transaction-bulk; RULE_NOT_FOUND (new code) and
+│                               OPTIMISTIC_LOCK_CONFLICT (existing SAD 39.4 code, first real use) added in
+│                               feature/category-admin - see below)
 ├── transaction              # owns transactions, transaction_sources
 │   ├── domain               Transaction, TransactionId, TransactionSource, TransactionSourceId, Money,
 │   │                          TransactionDirection (local to this module, see below), TransactionStatus, SourceStatus
@@ -135,18 +142,42 @@ za.co.tinyiko.transactionaggregation
 ├── categorisation            # owns transaction_categories, categorisation_rules
 │   ├── domain               TransactionCategory, TransactionCategoryId, CategorisationRule, CategorisationRuleId,
 │   │                          Direction (local to this module, see below), MatchField, MatchOperator, CategorisationRuleEngine
+│   │                          (CategorisationRule.update, feature/category-admin: the same field-level
+│   │                          invariants as .register, for an existing id and an explicit active flag -
+│   │                          still no version/persistence concept anywhere in this class; see below)
 │   ├── application          CategoriseTransactionUseCase, CategorisationInput (direction is a String, not Direction),
 │   │                          CategorisationDecision (categoryId/matchedRuleId are UUID, not the domain id types), CategorisationService,
 │   │                          GetCategoryUseCase (get, findIdByCode, getByIds - the latter two added in
 │   │                          feature/transaction-query for categoryCode search-filter resolution and batch
 │   │                          search-result enrichment), CategoryView (now carries categoryId, not just
-│   │                          code/name), GetCategoryService
+│   │                          code/name), GetCategoryService,
+│   │                          ListCategoriesUseCase (list, get - category-admin reads, CategoryAdminView),
+│   │                          CategoryAdminView (deliberately distinct from CategoryView; see its own Javadoc),
+│   │                          ListCategorisationRulesUseCase, GetCategorisationRuleUseCase, CategorisationRuleView
+│   │                          (carries version as a plain long), CreateCategorisationRuleUseCase,
+│   │                          CreateCategorisationRuleCommand, UpdateCategorisationRuleUseCase,
+│   │                          UpdateCategorisationRuleCommand (carries expectedVersion as a plain long),
+│   │                          CategorisationRuleAdminService (implements both create and update),
+│   │                          RuleNotFoundException, RuleConflictException, RuleValidationException
+│   │                          (category-admin additions, feature/category-admin: FR/UC not documented, an
+│   │                          explicit project decision - see Implementation Rules below)
 │   │                          (public API exposed via a package-level @NamedInterface, not per-class; see below)
-│   ├── port                 CategoryRepositoryPort (findFallback, findByCode, findByIds - the latter two added
-│   │                          in feature/transaction-query), CategorisationRuleRepositoryPort (findAllActive only)
+│   ├── port                 CategoryRepositoryPort (findFallback, findByCode, findByIds, findAll - the last
+│   │                          added in feature/category-admin for the read-only category-list endpoint;
+│   │                          category administration is deliberately read-only, still no save),
+│   │                          CategorisationRuleRepositoryPort (findAllActive - runtime, unchanged; findAll,
+│   │                          findRowById, create, update - admin reads/writes added in feature/category-admin,
+│   │                          returning this port's own CategorisationRuleRow, never the domain type, for
+│   │                          admin reads - see below)
 │   ├── persistence           TransactionCategoryEntity, CategorisationRuleEntity, SpringDataTransactionCategoryRepository,
-│   │                          SpringDataCategorisationRuleRepository, JpaCategoryRepositoryAdapter, JpaCategorisationRuleRepositoryAdapter
-│   └── mapper                TransactionCategoryMapper, CategorisationRuleMapper (toDomain only, no applyTo; see below)
+│   │                          SpringDataCategorisationRuleRepository, JpaCategoryRepositoryAdapter,
+│   │                          JpaCategorisationRuleRepositoryAdapter (create/update added in feature/category-admin -
+│   │                          see its own Javadoc for the exact optimistic-locking sequencing, and the
+│   │                          Optimistic Locking / Concurrency section below)
+│   └── mapper                TransactionCategoryMapper (toDomain only, no applyTo - category writes stay
+│                               out of scope, see below), CategorisationRuleMapper (toDomain, toEntity, applyTo -
+│                               the latter two added in feature/category-admin, same "mutate the managed
+│                               entity in place" convention every other mutable aggregate's mapper follows)
 ├── aggregation              # owns no tables; reads via transaction.application.TransactionQueryPort
 │   ├── domain               DateRange (from/to LocalDate, both inclusive, max 24-month span - TDS 20)
 │   └── application          GetCustomerSummaryUseCase, GetCategorySummaryUseCase, GetMerchantSummaryUseCase,
@@ -435,3 +466,18 @@ Do not start a module whose dependencies aren't yet in place, and do not let a f
 Transaction-boundary design: `BulkCreateTransactionsService.create` carries **no `@Transactional` annotation**. `CreateTransactionUseCase.create` keeps its own `@Transactional` (default `REQUIRED` propagation), unchanged. Because the bulk method has no ambient transaction, each call to the *injected* `CreateTransactionUseCase` proxy bean - a genuine bean-to-bean call, not self-invocation, even though both classes live in the same `transaction.application` package - opens a brand-new, independent physical transaction; Spring's transactional interceptor rolls back and completes that rollback *before* re-throwing, so `BulkCreateTransactionsService` only ever catches an exception after that item's own transaction is already cleanly gone, leaving every previously-committed item untouched. Same-batch duplicates need no special detection for the identical reason: processing is strictly sequential, so the first occurrence of a `(sourceCode, externalTransactionId)` pair commits before the second is attempted, and the second is caught by the *existing* pre-check/unique-constraint duplicate detection exactly as it would catch a duplicate against already-persisted data.
 
 Response status vocabulary: SAD 35.2's own JSON example shows only two literal `status` values (`CREATED`, `CONFLICT`); SAD 39.8 defines no `status` field or enumeration at all. No third status word is documented anywhere. `TransactionApiMapper.toBulkItemResponse` therefore uses a three-value vocabulary - `CREATED`, `CONFLICT` (only for `errorCode == "TRANSACTION_DUPLICATE"`), `FAILED` (every other failure) - with the already-catalogued `errorCode` (SAD 39.4, unchanged, no new bulk-specific codes) carrying the specific reason. No Flyway migration was needed (bulk reuses the existing `transactions` write path unchanged, confirmed against V1-V11); no `ApplicationModule.allowedDependencies` change was needed (`BulkCreateTransactionsService` calls `CreateTransactionUseCase` within the same module, never crossing a Modulith boundary); `saveAll` was considered and rejected (it would defeat per-item duplicate translation, per-item audit, and the independent-transaction-per-item boundary partial success requires). A focused Testcontainers concurrent-duplicate-write test (two threads racing the identical `(sourceId, externalTransactionId)` pair against `JpaTransactionRepositoryAdapter.save`) was considered for this branch and deliberately deferred: bulk introduces no new concurrency (still strictly sequential), so that test remains orthogonal general write-path hardening, not something this branch's own documented scope requires.
+
+**`feature/category-admin` (post-MVP, after `feature/transaction-bulk`) implements category and categorisation-rule administration - `GET /api/v1/categories`, `GET /api/v1/categories/{id}`, `GET /api/v1/categorisation-rules`, `GET /api/v1/categorisation-rules/{id}`, `POST /api/v1/categorisation-rules`, `PUT /api/v1/categorisation-rules/{id}`, all `CATEGORY_ADMIN`-protected.** This branch's scope is an **explicit project resolution of a genuinely incomplete SAD/TDS contract, not something fully specified by the documentation** - worth stating plainly, since every other branch's scope so far has been derivable from a documented contract even where individual fields needed inference. Neither SAD nor TDS documents a single category/rule-admin HTTP method, path, request/response field, or status code: SAD 36.4 gives `CATEGORY_ADMIN` a one-line purpose ("manage categories and rules"), SAD 34.1 lists `/api/v1/categories` once as a bare example resource with no further detail, and TDS 54/55/56/57 name a `CategoryAdminController` and `CreateCategorisationRuleRequest`/`UpdateCategorisationRuleRequest` in its class catalogue with zero accompanying method signatures or fields - conspicuously omitting any category create/update request DTO or rule response DTO from the same catalogue, unlike every other implemented capability's entry there. The scope actually implemented - **categories read-only (list/get); rules full create/update, no physical delete for either** - was chosen as the narrowest reading fully supported by these concrete, named artifacts (the two named rule request DTOs, the one named `CategoryResponse`) rather than inferred from SAD 27.5's domain attribute table describing what the aggregate *could* eventually support. Category create/update/deactivate/delete remain explicitly out of scope pending a future decision, not an oversight.
+
+Several further explicit decisions, all made because the documentation was silent, not because a contract dictated them:
+- **`RULE_NOT_FOUND` is a new 404 error code**, not part of SAD 39.4's catalogue - no rule-specific not-found code is documented anywhere. `OPTIMISTIC_LOCK_CONFLICT` (409), by contrast, is an *existing* SAD 39.4 code that had never been used until now.
+- **`PUT /api/v1/categorisation-rules/{id}` is full-replacement** (SAD 34.2: "replace a complete mutable resource"), covering field edits, activation/deactivation, and priority change in one endpoint - nothing distinguishes these as separate documented operations. `categoryId` is mutable through this same endpoint.
+- **No physical delete anywhere.** `fk_categorisation_rules_category`/`fk_transactions_category` are both `RESTRICT` (no cascade, V4/V9) - a category referenced by any rule or persisted transaction is already physically undeletable at the DB level, and SAD 32.10's retention philosophy ("processed transactions are not physically deleted... deactivation does not delete history") argues against it for rules too, even though no FK physically blocks rule deletion. Both aggregates' existing `active` flag (already persisted since `feature/categorisation`, previously unused by any write path) is the only "removal" mechanism.
+
+**Optimistic-locking design - the part of this branch that needed the most care, corrected once during review before implementation.** `categorisation.domain.CategorisationRule` still carries no version field and never will; `@Version` stays exactly where it already was, solely on `CategorisationRuleEntity` (`categorisation_rules.version`, present since `feature/categorisation`'s own V4 migration, simply unexercised until this branch's first real write path). The version crosses every other boundary as a plain `long`: `categorisation.port.CategorisationRuleRow` (a new, port-owned admin row type - not the domain aggregate, not the entity) carries it out of the adapter; `CategorisationRuleView` (application) and `CategorisationRuleResponse` (api) both copy it straight through. A client obtains the current `version` from any GET and must echo it back as `expectedVersion` on its next `PUT`.
+
+The first draft of `JpaCategorisationRuleRepositoryAdapter#update` split this into two port calls - `findRowById` (to compare `expectedVersion`) followed by a separate `update` call that re-loaded the entity - which review caught as a genuine race: if a concurrent write landed between those two loads, the second load would silently observe the newer version, the stale `expectedVersion` would then "coincidentally" match it, and the update would wrongly succeed. **The fix, now in place: `update` takes `expectedVersion` directly and does the entire load → compare → mutate → flush sequence against one single managed entity, in one method, with no intervening second read.** The explicit `entity.getVersion() != expectedVersion` check (comparing against that same just-loaded value) catches the common case - the caller's data was already stale before the write was even attempted. `saveAndFlush`'s own Hibernate-generated `UPDATE ... WHERE id = ? AND version = ?` - built from that identical entity instance, never a re-read one - is the final guard for a write landing in the narrow window between this method's own load and its flush, surfacing as `ObjectOptimisticLockingFailureException`. Both paths translate to the same `RuleConflictException` → `409 OPTIMISTIC_LOCK_CONFLICT`. This holds whether the method runs inside an outer `@Transactional` (the entity stays attached throughout) or with no ambient transaction at all (the entity detaches after `findById`, and `saveAndFlush` performs a JPA merge, which enforces the identical version-vs-current-row check at merge time) - proved directly by `JpaCategorisationRuleRepositoryAdapterConcurrencyTests`, which uses `@Transactional(propagation = NOT_SUPPORTED)` to force two genuinely independent, separately-committing calls (not two calls sharing one rolled-back test transaction) and had to add explicit `@AfterEach` cleanup once it was discovered, empirically, that disabling the ambient transaction also disables `@DataJpaTest`'s usual rollback, letting a first draft of this test leak a row into the shared Testcontainers database and intermittently break an unrelated sibling test's seeded-row-count assertion.
+
+**No blanket `DataIntegrityViolationException` translation exists for rules.** Unlike `merchant`/`transaction`'s adapters, `create` has no try/catch at all: rules have no uniqueness constraint (duplicates are explicitly permitted, confirmed against V4's DDL), and the category-reference FK can never actually fail there since `CategorisationRuleAdminService` validates the category exists first and categories are never deletable in this branch's scope - so there is no other persistence failure on `create` with a defined application meaning to translate. `update`'s only catch is the narrow, precisely-scoped `ObjectOptimisticLockingFailureException` described above. An unexpected/systemic failure is left to propagate as a genuine `500`, not disguised as a business conflict - the same principle `feature/transaction-bulk` already established for its own per-item exception handling.
+
+Regex patterns (`MatchOperator.REGEX`) are validated eagerly at create/update time (`Pattern.compile`, wrapped as `RuleValidationException` on failure) specifically because `CategorisationRule.matches` only compiles a pattern lazily, the first time a real transaction is categorised - without eager validation, a broken pattern would not surface until it broke runtime categorisation for an actual customer transaction. `CategorisationRuleEngine`/`CategorisationService` are otherwise entirely untouched; `findAllActive()`'s existing active-only filtering is what makes a newly-created, updated, or deactivated rule visible (or invisible) to the very next categorisation call with no other code change, proved by `CategoryAdminEndToEndTests`. No audit events are produced by any admin endpoint (not documented anywhere - checked SAD 27.7's audit event catalogue specifically); no caching exists to invalidate (none exists today, none was added); no Flyway migration was needed (every column this branch writes through - `active`, `version` - already existed).
