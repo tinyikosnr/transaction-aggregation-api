@@ -6,6 +6,8 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * The bulk-create request body (SAD 35.2, TDS 29) - a wrapper object, not a raw JSON array,
  * matching TDS 55's own dedicated {@code BulkCreateTransactionsRequest} class and this codebase's
@@ -22,6 +24,8 @@ import jakarta.validation.constraints.Size;
  * here, since a malformed envelope genuinely has nothing to process at all.
  */
 public record BulkCreateTransactionsRequest(
+		@Schema(description = "Transactions to create in this batch (1-500 items), processed independently: one invalid item is reported as its own failed result and never rolls back the rest (no atomic all-or-nothing guarantee).",
+				requiredMode = Schema.RequiredMode.REQUIRED)
 		@NotEmpty(message = "must contain at least one transaction")
 		@Size(max = 500, message = "must not contain more than 500 transactions")
 		List<@NotNull(message = "must not contain a null transaction") CreateTransactionRequest> transactions

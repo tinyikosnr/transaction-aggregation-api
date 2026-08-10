@@ -12,6 +12,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -158,6 +159,24 @@ class GlobalExceptionHandler {
 
 	@ExceptionHandler(AccessDeniedException.class)
 	void rethrowAccessDenied(AccessDeniedException ex) {
+		throw ex;
+	}
+
+	/**
+	 * Same rethrow technique as {@link #rethrowAccessDenied}, for the same reason: without this,
+	 * the catch-all {@code @ExceptionHandler(Exception.class)} below matched
+	 * {@link NoResourceFoundException} first, turning every request against an unmapped path into
+	 * a 500 instead of a 404 - invisible until {@code feature/openapi-documentation} added
+	 * {@code permitAll()} matchers for the (by-default-disabled) springdoc paths, since every other
+	 * unmapped path in this API sits behind {@code anyRequest().authenticated()} and gets a 401
+	 * from Spring Security before ever reaching {@code DispatcherServlet}'s handler resolution.
+	 * {@link NoResourceFoundException} already extends {@code ErrorResponseException} and carries
+	 * its own correct 404 {@link ProblemDetail}; rethrowing lets Spring's own default
+	 * {@code HandlerExceptionResolver} chain render it, rather than reinventing an equivalent
+	 * {@code ProblemDetail} here.
+	 */
+	@ExceptionHandler(NoResourceFoundException.class)
+	void rethrowNoResourceFound(NoResourceFoundException ex) throws NoResourceFoundException {
 		throw ex;
 	}
 

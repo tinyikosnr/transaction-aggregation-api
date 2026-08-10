@@ -20,6 +20,14 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import za.co.tinyiko.transactionaggregation.api.dto.request.BulkCreateTransactionsRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateTransactionRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionResponse;
@@ -57,6 +65,7 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionS
  */
 @RestController
 @RequestMapping("/api/v1/transactions")
+@Tag(name = "Transactions", description = "Ingest and query standardised transactions (requires TRANSACTION_WRITE for writes, TRANSACTION_READ for reads).")
 class TransactionController {
 
 	private final CreateTransactionUseCase createTransactionUseCase;
@@ -78,6 +87,16 @@ class TransactionController {
 
 	@PostMapping
 	@PreAuthorize("hasAuthority('TRANSACTION_WRITE')")
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Create a single transaction", description = """
+			Validates, deduplicates (by sourceCode + externalTransactionId, BR-08), categorises, and \
+			persists a single transaction. Requires the TRANSACTION_WRITE authority.""")
+	@ApiResponse(responseCode = "201", description = "Transaction created; Location header points to GET /api/v1/transactions/{id}.")
+	@ApiResponse(responseCode = "400", description = "REQUEST_VALIDATION_FAILED - request failed structural or business validation.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing TRANSACTION_WRITE.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "404", description = "SOURCE_NOT_FOUND or CUSTOMER_NOT_FOUND - sourceCode/customerId does not resolve.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "409", description = "TRANSACTION_DUPLICATE - sourceCode + externalTransactionId already processed (BR-08).", content = @Content(mediaType = "application/problem+json"))
 	ResponseEntity<TransactionResponse> create(@Valid @RequestBody CreateTransactionRequest request, HttpServletRequest servletRequest, Principal principal) {
 		CorrelationId correlationId = (CorrelationId) servletRequest.getAttribute(CorrelationId.REQUEST_ATTRIBUTE_NAME);
 		CreateTransactionCommand command = TransactionApiMapper.toCommand(request, correlationId, principal.getName());
@@ -93,6 +112,17 @@ class TransactionController {
 
 	@PostMapping("/bulk")
 	@PreAuthorize("hasAuthority('TRANSACTION_WRITE')")
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Create up to 500 transactions in one batch", description = """
+			Processes 1-500 transactions, each in its own transaction boundary: one invalid or duplicate \
+			item is reported as its own failed/conflict result and never rolls back the rest of the batch \
+			(no atomic all-or-nothing guarantee). Always returns 207 Multi-Status once per-item processing \
+			starts, whether every item succeeded, every item failed, or the outcome was mixed. Requires the \
+			TRANSACTION_WRITE authority.""")
+	@ApiResponse(responseCode = "207", description = "Multi-Status - per-item results in the response body; see each item's own status/errorCode.")
+	@ApiResponse(responseCode = "400", description = "REQUEST_VALIDATION_FAILED - the batch envelope itself is empty or exceeds 500 items.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing TRANSACTION_WRITE.", content = @Content(mediaType = "application/problem+json"))
 	ResponseEntity<BulkTransactionResponse> createBulk(@Valid @RequestBody BulkCreateTransactionsRequest request, HttpServletRequest servletRequest, Principal principal) {
 		CorrelationId correlationId = (CorrelationId) servletRequest.getAttribute(CorrelationId.REQUEST_ATTRIBUTE_NAME);
 		BulkCreateTransactionsCommand command = TransactionApiMapper.toBulkCommand(request, correlationId, principal.getName());
@@ -103,24 +133,51 @@ class TransactionController {
 
 	@GetMapping("/{id}")
 	@PreAuthorize("hasAuthority('TRANSACTION_READ')")
-	TransactionResponse get(@PathVariable UUID id) {
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Get a single transaction by id", description = "Returns full transaction detail, including resolved merchant/category. Requires the TRANSACTION_READ authority.")
+	@ApiResponse(responseCode = "200", description = "Transaction found.")
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing TRANSACTION_READ.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "404", description = "TRANSACTION_NOT_FOUND - no transaction exists with the given id.", content = @Content(mediaType = "application/problem+json"))
+	TransactionResponse get(
+			@Parameter(description = "Transaction identifier.") @PathVariable UUID id
+	) {
 		TransactionDetails details = getTransactionUseCase.get(id);
 		return TransactionApiMapper.toResponse(details);
 	}
 
 	@GetMapping
 	@PreAuthorize("hasAuthority('TRANSACTION_READ')")
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Search transactions", description = """
+			Filtered, paginated, sorted transaction search. Every filter is optional and combined with AND. \
+			An unresolvable sourceCode/categoryCode yields a 200 response with an empty page, not a 404 - \
+			an unknown filter value is treated as "no matches", not as a client error. When both occurredFrom \
+			and occurredTo are supplied, the range must not exceed 24 months; supplying only one bound is \
+			unrestricted. Sorting is restricted to transactionTimestamp (maps to occurredAt), asc or desc; \
+			no other field is sortable. Requires the TRANSACTION_READ authority.""")
+	@ApiResponse(responseCode = "200", description = "Search executed (possibly with an empty page); see PageInfo for pagination metadata.")
+	@ApiResponse(responseCode = "400", description = "REQUEST_VALIDATION_FAILED - invalid filter/sort value, or INVALID_DATE_RANGE when occurredFrom/occurredTo together exceed 24 months.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing TRANSACTION_READ.", content = @Content(mediaType = "application/problem+json"))
 	TransactionSearchResponse search(
-			@RequestParam(required = false) UUID customerId,
+			@Parameter(description = "Filter by customer id.") @RequestParam(required = false) UUID customerId,
+			@Parameter(description = "Filter by upstream source code. Unresolvable codes yield an empty page, not a 404.", example = "MOCK_BANK_A")
 			@RequestParam(required = false) String sourceCode,
+			@Parameter(description = "Filter by category code. Unresolvable codes yield an empty page, not a 404.", example = "GROCERIES")
 			@RequestParam(required = false) String categoryCode,
-			@RequestParam(required = false) UUID merchantId,
+			@Parameter(description = "Filter by resolved merchant id.") @RequestParam(required = false) UUID merchantId,
+			@Parameter(description = "Filter by cash-flow direction.", schema = @Schema(allowableValues = {"CREDIT", "DEBIT"}))
 			@RequestParam(required = false) String direction,
+			@Parameter(description = "Filter by persisted status.", schema = @Schema(allowableValues = {"RECEIVED", "PROCESSED", "REJECTED"}))
 			@RequestParam(required = false) String status,
+			@Parameter(description = "Inclusive lower bound on occurredAt (UTC). Combined with occurredTo, the range must not exceed 24 months.")
 			@RequestParam(required = false) Instant occurredFrom,
+			@Parameter(description = "Inclusive upper bound on occurredAt (UTC). Combined with occurredFrom, the range must not exceed 24 months.")
 			@RequestParam(required = false) Instant occurredTo,
-			@RequestParam(defaultValue = "0") int page,
-			@RequestParam(defaultValue = "20") int size,
+			@Parameter(description = "Zero-based page number.") @RequestParam(defaultValue = "0") int page,
+			@Parameter(description = "Page size.") @RequestParam(defaultValue = "20") int size,
+			@Parameter(description = "Sort as 'transactionTimestamp,asc' or 'transactionTimestamp,desc'. No other field is sortable.", example = "transactionTimestamp,desc")
 			@RequestParam(required = false) String sort
 	) {
 		TransactionSearchCriteria criteria = new TransactionSearchCriteria(

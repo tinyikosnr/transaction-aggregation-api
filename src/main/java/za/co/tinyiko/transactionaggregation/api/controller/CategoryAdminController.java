@@ -17,6 +17,13 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import jakarta.validation.Valid;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateCategorisationRuleRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.UpdateCategorisationRuleRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.response.CategorisationRuleResponse;
@@ -41,6 +48,7 @@ import za.co.tinyiko.transactionaggregation.categorisation.application.UpdateCat
  * {@code categorisation.application}, not here.
  */
 @RestController
+@Tag(name = "Category Administration", description = "Read categories and administer categorisation rules (requires CATEGORY_ADMIN). No category write path and no rule deletion path exist - see each operation's description.")
 class CategoryAdminController {
 
 	private final ListCategoriesUseCase listCategoriesUseCase;
@@ -65,30 +73,63 @@ class CategoryAdminController {
 
 	@GetMapping("/api/v1/categories")
 	@PreAuthorize("hasAuthority('CATEGORY_ADMIN')")
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "List all categories", description = "Returns every seeded transaction category, active and inactive. Read-only - no category write path exists. Requires the CATEGORY_ADMIN authority.")
+	@ApiResponse(responseCode = "200", description = "Categories returned.")
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing CATEGORY_ADMIN.", content = @Content(mediaType = "application/problem+json"))
 	List<CategoryResponse> listCategories() {
 		return CategoryAdminApiMapper.toCategoryResponses(listCategoriesUseCase.list());
 	}
 
 	@GetMapping("/api/v1/categories/{id}")
 	@PreAuthorize("hasAuthority('CATEGORY_ADMIN')")
-	CategoryResponse getCategory(@PathVariable UUID id) {
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Get a single category", description = "Requires the CATEGORY_ADMIN authority.")
+	@ApiResponse(responseCode = "200", description = "Category found.")
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing CATEGORY_ADMIN.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "404", description = "CATEGORY_NOT_FOUND - no category exists with the given id.", content = @Content(mediaType = "application/problem+json"))
+	CategoryResponse getCategory(
+			@Parameter(description = "Category identifier.") @PathVariable UUID id
+	) {
 		return CategoryAdminApiMapper.toResponse(listCategoriesUseCase.get(id));
 	}
 
 	@GetMapping("/api/v1/categorisation-rules")
 	@PreAuthorize("hasAuthority('CATEGORY_ADMIN')")
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "List all categorisation rules", description = "Returns every rule, active and inactive, in no particular guaranteed order (priority is not required to be unique or dense). Requires the CATEGORY_ADMIN authority.")
+	@ApiResponse(responseCode = "200", description = "Rules returned.")
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing CATEGORY_ADMIN.", content = @Content(mediaType = "application/problem+json"))
 	List<CategorisationRuleResponse> listRules() {
 		return CategoryAdminApiMapper.toRuleResponses(listCategorisationRulesUseCase.list());
 	}
 
 	@GetMapping("/api/v1/categorisation-rules/{id}")
 	@PreAuthorize("hasAuthority('CATEGORY_ADMIN')")
-	CategorisationRuleResponse getRule(@PathVariable UUID id) {
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Get a single categorisation rule", description = "Requires the CATEGORY_ADMIN authority.")
+	@ApiResponse(responseCode = "200", description = "Rule found.")
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing CATEGORY_ADMIN.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "404", description = "RULE_NOT_FOUND - no rule exists with the given id.", content = @Content(mediaType = "application/problem+json"))
+	CategorisationRuleResponse getRule(
+			@Parameter(description = "Rule identifier.") @PathVariable UUID id
+	) {
 		return CategoryAdminApiMapper.toResponse(getCategorisationRuleUseCase.get(id));
 	}
 
 	@PostMapping("/api/v1/categorisation-rules")
 	@PreAuthorize("hasAuthority('CATEGORY_ADMIN')")
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Create a categorisation rule", description = "Creates a new rule, active by default. priority is not required to be unique or dense; duplicate priorities across rules are permitted. Requires the CATEGORY_ADMIN authority.")
+	@ApiResponse(responseCode = "201", description = "Rule created; Location header points to GET /api/v1/categorisation-rules/{id}.")
+	@ApiResponse(responseCode = "400", description = "REQUEST_VALIDATION_FAILED - request failed structural or business validation (e.g. unknown matchField/operator/direction value).", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing CATEGORY_ADMIN.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "404", description = "CATEGORY_NOT_FOUND - categoryId does not resolve to an existing category.", content = @Content(mediaType = "application/problem+json"))
 	ResponseEntity<CategorisationRuleResponse> createRule(@Valid @RequestBody CreateCategorisationRuleRequest request) {
 		CreateCategorisationRuleCommand command = CategoryAdminApiMapper.toCommand(request);
 		CategorisationRuleView created = createCategorisationRuleUseCase.create(command);
@@ -103,7 +144,22 @@ class CategoryAdminController {
 
 	@PutMapping("/api/v1/categorisation-rules/{id}")
 	@PreAuthorize("hasAuthority('CATEGORY_ADMIN')")
-	CategorisationRuleResponse updateRule(@PathVariable UUID id, @Valid @RequestBody UpdateCategorisationRuleRequest request) {
+	@SecurityRequirement(name = "bearerAuth")
+	@Operation(summary = "Replace a categorisation rule", description = """
+			Full-replacement PUT semantics: every field, including categoryId (mutable) and active, must be \
+			supplied. Requires expectedVersion to match the rule's current optimistic-locking version - a \
+			stale value is rejected rather than silently overwritten. There is no rule deletion endpoint; use \
+			active=false to retire a rule instead. Requires the CATEGORY_ADMIN authority.""")
+	@ApiResponse(responseCode = "200", description = "Rule replaced; response reflects the new version.")
+	@ApiResponse(responseCode = "400", description = "REQUEST_VALIDATION_FAILED - request failed structural or business validation.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED - missing or invalid bearer token.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "403", description = "ACCESS_DENIED - authenticated but missing CATEGORY_ADMIN.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "404", description = "RULE_NOT_FOUND or CATEGORY_NOT_FOUND - the rule id, or the request's categoryId, does not resolve.", content = @Content(mediaType = "application/problem+json"))
+	@ApiResponse(responseCode = "409", description = "OPTIMISTIC_LOCK_CONFLICT - expectedVersion no longer matches the rule's current version.", content = @Content(mediaType = "application/problem+json"))
+	CategorisationRuleResponse updateRule(
+			@Parameter(description = "Rule identifier.") @PathVariable UUID id,
+			@Valid @RequestBody UpdateCategorisationRuleRequest request
+	) {
 		UpdateCategorisationRuleCommand command = CategoryAdminApiMapper.toCommand(request);
 		CategorisationRuleView updated = updateCategorisationRuleUseCase.update(id, command);
 		return CategoryAdminApiMapper.toResponse(updated);
