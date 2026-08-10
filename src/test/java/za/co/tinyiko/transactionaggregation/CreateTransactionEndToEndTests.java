@@ -2,6 +2,7 @@ package za.co.tinyiko.transactionaggregation;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import tools.jackson.databind.ObjectMapper;
 
+import za.co.tinyiko.transactionaggregation.api.dto.request.BulkCreateTransactionsRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateTransactionRequest;
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
 
@@ -108,6 +110,42 @@ class CreateTransactionEndToEndTests {
 						.content(objectMapper.writeValueAsString(request)))
 				.andExpect(status().isUnauthorized())
 				.andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
+	}
+
+	@Test
+	void bulkCreatesTransactionsThroughTheWholeRealStackWithAMixedOutcome() throws Exception {
+		UUID customerId = insertCustomer();
+		String sharedExternalId = "EXT-BULK-" + UUID.randomUUID();
+		BulkCreateTransactionsRequest request = new BulkCreateTransactionsRequest(List.of(
+				new CreateTransactionRequest(customerId, "MOCK_BANK_A", sharedExternalId, "Checkers",
+						new BigDecimal("125.50"), "ZAR", "DEBIT", "groceries", Instant.now()),
+				new CreateTransactionRequest(customerId, "MOCK_BANK_A", sharedExternalId, "Checkers",
+						new BigDecimal("125.50"), "ZAR", "DEBIT", "groceries", Instant.now()),
+				new CreateTransactionRequest(customerId, "MOCK_BANK_A", "EXT-BULK-" + UUID.randomUUID(), "Shell",
+						new BigDecimal("50.00"), "ZAR", "DEBIT", "fuel", Instant.now())));
+
+		mockMvc.perform(post("/api/v1/transactions/bulk")
+						.with(jwt().jwt(builder -> builder.subject(ACTOR)).authorities(new SimpleGrantedAuthority("TRANSACTION_WRITE")))
+						.header(CorrelationId.HEADER_NAME, "e2e-bulk-correlation-id")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(request)))
+				.andExpect(status().isMultiStatus())
+				.andExpect(jsonPath("$.total").value(3))
+				.andExpect(jsonPath("$.successful").value(2))
+				.andExpect(jsonPath("$.failed").value(1))
+				.andExpect(jsonPath("$.results[0].status").value("CREATED"))
+				.andExpect(jsonPath("$.results[1].status").value("CONFLICT"))
+				.andExpect(jsonPath("$.results[1].errorCode").value("TRANSACTION_DUPLICATE"))
+				.andExpect(jsonPath("$.results[2].status").value("CREATED"));
+
+		Long createdAuditCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM audit_events WHERE correlation_id = ? AND event_type = 'TRANSACTION_CREATED' AND actor = ?",
+				Long.class, "e2e-bulk-correlation-id", ACTOR);
+		Long duplicateAuditCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM audit_events WHERE correlation_id = ? AND event_type = 'TRANSACTION_DUPLICATE_REJECTED' AND actor = ?",
+				Long.class, "e2e-bulk-correlation-id", ACTOR);
+		assertThat(createdAuditCount).isEqualTo(2L);
+		assertThat(duplicateAuditCount).isEqualTo(1L);
 	}
 
 	@Test

@@ -20,11 +20,15 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import tools.jackson.databind.ObjectMapper;
 
+import za.co.tinyiko.transactionaggregation.api.dto.request.BulkCreateTransactionsRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateTransactionRequest;
 import za.co.tinyiko.transactionaggregation.security.SecurityConfig;
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkTransactionItemResult;
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkTransactionResult;
 import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionCommand;
 import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionsBulkUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.CustomerNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
 import za.co.tinyiko.transactionaggregation.transaction.application.GetTransactionUseCase;
@@ -79,6 +83,9 @@ class TransactionControllerTests {
 	private CreateTransactionUseCase createTransactionUseCase;
 
 	@MockitoBean
+	private CreateTransactionsBulkUseCase createTransactionsBulkUseCase;
+
+	@MockitoBean
 	private GetTransactionUseCase getTransactionUseCase;
 
 	@MockitoBean
@@ -98,6 +105,14 @@ class TransactionControllerTests {
 				merchantId, "Checkers", "GROCERIES", "Groceries", new BigDecimal("125.50"), "ZAR", "DEBIT",
 				"groceries", "PROCESSED", Instant.parse("2026-08-06T08:00:00Z"),
 				Instant.parse("2026-08-06T08:00:01Z"), Instant.parse("2026-08-06T08:00:01Z"));
+	}
+
+	private static BulkCreateTransactionsRequest aBulkRequest(int itemCount) {
+		return new BulkCreateTransactionsRequest(java.util.stream.IntStream.range(0, itemCount)
+				.mapToObj(i -> new CreateTransactionRequest(UUID.randomUUID(), "MOCK_BANK_A", "EXT-" + i,
+						"Checkers", new BigDecimal("125.50"), "ZAR", "DEBIT", "groceries",
+						Instant.parse("2026-08-06T08:00:00Z")))
+				.toList());
 	}
 
 	private static RequestPostProcessor transactionWriteToken() {
@@ -393,6 +408,82 @@ class TransactionControllerTests {
 	@Test
 	void searchReturnsForbiddenWhenTheAuthorityIsMissing() throws Exception {
 		mockMvc.perform(get("/api/v1/transactions").with(transactionWriteToken()))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
+	}
+
+	@Test
+	void bulkCreateReturns207WithTheMappedResultOnAMixedOutcomeBatch() throws Exception {
+		BulkTransactionResult result = new BulkTransactionResult(2, 1, 1, List.of(
+				BulkTransactionItemResult.created(UUID.randomUUID()),
+				BulkTransactionItemResult.failed("TRANSACTION_DUPLICATE", "already exists")));
+		when(createTransactionsBulkUseCase.create(any())).thenReturn(result);
+
+		mockMvc.perform(post("/api/v1/transactions/bulk")
+						.with(transactionWriteToken())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(aBulkRequest(2))))
+				.andExpect(status().isMultiStatus())
+				.andExpect(jsonPath("$.total").value(2))
+				.andExpect(jsonPath("$.successful").value(1))
+				.andExpect(jsonPath("$.failed").value(1))
+				.andExpect(jsonPath("$.results[0].index").value(0))
+				.andExpect(jsonPath("$.results[0].status").value("CREATED"))
+				.andExpect(jsonPath("$.results[1].index").value(1))
+				.andExpect(jsonPath("$.results[1].status").value("CONFLICT"))
+				.andExpect(jsonPath("$.results[1].errorCode").value("TRANSACTION_DUPLICATE"));
+	}
+
+	@Test
+	void bulkCreateReturns207ForAFullyFailedBatch() throws Exception {
+		BulkTransactionResult result = new BulkTransactionResult(1, 0, 1, List.of(
+				BulkTransactionItemResult.failed("REQUEST_VALIDATION_FAILED", "amount must be greater than zero")));
+		when(createTransactionsBulkUseCase.create(any())).thenReturn(result);
+
+		mockMvc.perform(post("/api/v1/transactions/bulk")
+						.with(transactionWriteToken())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(aBulkRequest(1))))
+				.andExpect(status().isMultiStatus())
+				.andExpect(jsonPath("$.results[0].status").value("FAILED"))
+				.andExpect(jsonPath("$.results[0].errorCode").value("REQUEST_VALIDATION_FAILED"));
+	}
+
+	@Test
+	void bulkCreateReturnsBadRequestWhenTheBatchIsEmpty() throws Exception {
+		mockMvc.perform(post("/api/v1/transactions/bulk")
+						.with(transactionWriteToken())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(aBulkRequest(0))))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.errorCode").value("REQUEST_VALIDATION_FAILED"));
+	}
+
+	@Test
+	void bulkCreateReturnsBadRequestWhenTheBatchExceedsTheMaximum() throws Exception {
+		mockMvc.perform(post("/api/v1/transactions/bulk")
+						.with(transactionWriteToken())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(aBulkRequest(501))))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.errorCode").value("REQUEST_VALIDATION_FAILED"));
+	}
+
+	@Test
+	void bulkCreateReturnsUnauthorizedWhenNoTokenIsSupplied() throws Exception {
+		mockMvc.perform(post("/api/v1/transactions/bulk")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(aBulkRequest(1))))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
+	}
+
+	@Test
+	void bulkCreateReturnsForbiddenWhenTheAuthorityIsMissing() throws Exception {
+		mockMvc.perform(post("/api/v1/transactions/bulk")
+						.with(jwt().jwt(builder -> builder.subject(ACTOR)).authorities(new SimpleGrantedAuthority("TRANSACTION_READ")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(aBulkRequest(1))))
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
 	}

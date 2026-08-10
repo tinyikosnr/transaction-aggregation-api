@@ -5,6 +5,7 @@ import java.security.Principal;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,13 +20,18 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
+import za.co.tinyiko.transactionaggregation.api.dto.request.BulkCreateTransactionsRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateTransactionRequest;
+import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionSearchResponse;
 import za.co.tinyiko.transactionaggregation.api.mapper.TransactionApiMapper;
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkCreateTransactionsCommand;
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkTransactionResult;
 import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionCommand;
 import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionsBulkUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.GetTransactionUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.PagedResult;
 import za.co.tinyiko.transactionaggregation.transaction.application.SearchTransactionsUseCase;
@@ -43,21 +49,29 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionS
  *
  * <p>{@code get}/{@code search} (FR-08, UC-03, UC-04, TDS §30-31) are thin: all filter/pagination/
  * sort validation lives in {@code transaction.application.SearchTransactionsService}, not here.
+ *
+ * <p>{@code createBulk} (FR-02, UC-02, SAD 32.5/35.2/39.8, TDS §29) is equally thin: it maps the
+ * request, delegates once to {@code CreateTransactionsBulkUseCase}, and maps the complete result
+ * straight to the response - all per-item validation, processing, and outcome-counting happens in
+ * {@code transaction.application.BulkCreateTransactionsService}, never here.
  */
 @RestController
 @RequestMapping("/api/v1/transactions")
 class TransactionController {
 
 	private final CreateTransactionUseCase createTransactionUseCase;
+	private final CreateTransactionsBulkUseCase createTransactionsBulkUseCase;
 	private final GetTransactionUseCase getTransactionUseCase;
 	private final SearchTransactionsUseCase searchTransactionsUseCase;
 
 	TransactionController(
 			CreateTransactionUseCase createTransactionUseCase,
+			CreateTransactionsBulkUseCase createTransactionsBulkUseCase,
 			GetTransactionUseCase getTransactionUseCase,
 			SearchTransactionsUseCase searchTransactionsUseCase
 	) {
 		this.createTransactionUseCase = createTransactionUseCase;
+		this.createTransactionsBulkUseCase = createTransactionsBulkUseCase;
 		this.getTransactionUseCase = getTransactionUseCase;
 		this.searchTransactionsUseCase = searchTransactionsUseCase;
 	}
@@ -75,6 +89,16 @@ class TransactionController {
 				.buildAndExpand(result.id())
 				.toUri();
 		return ResponseEntity.created(location).body(response);
+	}
+
+	@PostMapping("/bulk")
+	@PreAuthorize("hasAuthority('TRANSACTION_WRITE')")
+	ResponseEntity<BulkTransactionResponse> createBulk(@Valid @RequestBody BulkCreateTransactionsRequest request, HttpServletRequest servletRequest, Principal principal) {
+		CorrelationId correlationId = (CorrelationId) servletRequest.getAttribute(CorrelationId.REQUEST_ATTRIBUTE_NAME);
+		BulkCreateTransactionsCommand command = TransactionApiMapper.toBulkCommand(request, correlationId, principal.getName());
+		BulkTransactionResult result = createTransactionsBulkUseCase.create(command);
+		BulkTransactionResponse response = TransactionApiMapper.toBulkResponse(result);
+		return ResponseEntity.status(HttpStatus.MULTI_STATUS).body(response);
 	}
 
 	@GetMapping("/{id}")
