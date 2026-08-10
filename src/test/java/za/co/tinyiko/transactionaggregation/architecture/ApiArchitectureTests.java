@@ -5,9 +5,13 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import za.co.tinyiko.transactionaggregation.api.dto.request.BulkCreateTransactionsRequest;
+import za.co.tinyiko.transactionaggregation.api.dto.request.CreateCategorisationRuleRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateTransactionRequest;
+import za.co.tinyiko.transactionaggregation.api.dto.request.UpdateCategorisationRuleRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionItemResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionResponse;
+import za.co.tinyiko.transactionaggregation.api.dto.response.CategorisationRuleResponse;
+import za.co.tinyiko.transactionaggregation.api.dto.response.CategoryResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.CategorySummaryResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.CustomerSummaryResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.MerchantSummaryResponse;
@@ -16,6 +20,7 @@ import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionResponse
 import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionSearchItemResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionSearchResponse;
 import za.co.tinyiko.transactionaggregation.api.mapper.AggregationApiMapper;
+import za.co.tinyiko.transactionaggregation.api.mapper.CategoryAdminApiMapper;
 import za.co.tinyiko.transactionaggregation.api.mapper.TransactionApiMapper;
 
 /**
@@ -32,7 +37,9 @@ class ApiArchitectureTests {
 
 	private static final List<Class<?>> REQUEST_DTO_TYPES = List.of(
 			CreateTransactionRequest.class,
-			BulkCreateTransactionsRequest.class
+			BulkCreateTransactionsRequest.class,
+			CreateCategorisationRuleRequest.class,
+			UpdateCategorisationRuleRequest.class
 	);
 
 	private static final List<Class<?>> RESPONSE_DTO_TYPES = List.of(
@@ -49,12 +56,15 @@ class ApiArchitectureTests {
 			TransactionSearchResponse.class,
 			TransactionSearchResponse.PageInfo.class,
 			BulkTransactionResponse.class,
-			BulkTransactionItemResponse.class
+			BulkTransactionItemResponse.class,
+			CategoryResponse.class,
+			CategorisationRuleResponse.class
 	);
 
 	private static final List<Class<?>> MAPPER_TYPES = List.of(
 			TransactionApiMapper.class,
-			AggregationApiMapper.class
+			AggregationApiMapper.class,
+			CategoryAdminApiMapper.class
 	);
 
 	/**

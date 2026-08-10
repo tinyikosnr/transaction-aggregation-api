@@ -16,6 +16,9 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import jakarta.servlet.http.HttpServletRequest;
 
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryNotFoundException;
+import za.co.tinyiko.transactionaggregation.categorisation.application.RuleConflictException;
+import za.co.tinyiko.transactionaggregation.categorisation.application.RuleNotFoundException;
+import za.co.tinyiko.transactionaggregation.categorisation.application.RuleValidationException;
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionNotFoundException;
@@ -34,8 +37,12 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionV
  * {@code CUSTOMER_NOT_FOUND}, {@code CATEGORY_NOT_FOUND}, {@code REQUEST_VALIDATION_FAILED},
  * {@code INVALID_DATE_RANGE}, {@code INTERNAL_SERVER_ERROR}, {@code TRANSACTION_NOT_FOUND}
  * (added in {@code feature/transaction-query}, already present in SAD 39.4's catalogue but unused
- * until now) - replacing the {@code TRX-001}-style
- * codes this class shipped with in {@code feature/api}, before the conflict was noticed. The two
+ * until now), {@code OPTIMISTIC_LOCK_CONFLICT} (added in {@code feature/category-admin}, also
+ * already present in SAD 39.4 but unused until now) - replacing the {@code TRX-001}-style
+ * codes this class shipped with in {@code feature/api}, before the conflict was noticed.
+ * {@code RULE_NOT_FOUND} (also added in {@code feature/category-admin}) is a genuinely new code,
+ * not part of SAD 39.4 - an explicit project decision, since no rule-specific not-found code is
+ * documented anywhere (see CLAUDE.md). The two
  * 401 codes ({@code AUTHENTICATION_REQUIRED}, {@code TOKEN_INVALID}) and the 403 code
  * ({@code ACCESS_DENIED}) never reach this class at all - see
  * {@code security.ProblemDetailAuthenticationEntryPoint}/{@code ProblemDetailAccessDeniedHandler}.
@@ -94,6 +101,21 @@ class GlobalExceptionHandler {
 	@ExceptionHandler(CategoryNotFoundException.class)
 	ResponseEntity<ProblemDetail> handleCategoryNotFound(CategoryNotFoundException ex, HttpServletRequest request) {
 		return respond(HttpStatus.NOT_FOUND, "CATEGORY_NOT_FOUND", ex.getMessage(), request);
+	}
+
+	@ExceptionHandler(RuleNotFoundException.class)
+	ResponseEntity<ProblemDetail> handleRuleNotFound(RuleNotFoundException ex, HttpServletRequest request) {
+		return respond(HttpStatus.NOT_FOUND, "RULE_NOT_FOUND", ex.getMessage(), request);
+	}
+
+	@ExceptionHandler(RuleConflictException.class)
+	ResponseEntity<ProblemDetail> handleRuleConflict(RuleConflictException ex, HttpServletRequest request) {
+		return respond(HttpStatus.CONFLICT, "OPTIMISTIC_LOCK_CONFLICT", ex.getMessage(), request);
+	}
+
+	@ExceptionHandler(RuleValidationException.class)
+	ResponseEntity<ProblemDetail> handleRuleValidation(RuleValidationException ex, HttpServletRequest request) {
+		return respond(HttpStatus.BAD_REQUEST, REQUEST_VALIDATION_FAILED_CODE, ex.getMessage(), request);
 	}
 
 	@ExceptionHandler(TransactionValidationException.class)

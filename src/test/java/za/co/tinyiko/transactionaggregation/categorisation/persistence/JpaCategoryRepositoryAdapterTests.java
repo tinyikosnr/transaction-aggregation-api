@@ -98,4 +98,12 @@ class JpaCategoryRepositoryAdapterTests {
 		assertThat(found).containsExactly(fallback);
 	}
 
+	@Test
+	void findAllReturnsEveryCategoryIncludingSeededCodes() {
+		List<TransactionCategory> categories = adapter.findAll();
+
+		assertThat(categories).hasSize(14);
+		assertThat(categories).extracting(TransactionCategory::code).contains("GROCERIES", "UNCATEGORISED", "SALARY");
+	}
+
 }
