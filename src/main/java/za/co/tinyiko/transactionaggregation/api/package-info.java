@@ -13,20 +13,24 @@
  * the four customer summary endpoints, {@code categorisation} solely to catch
  * {@code CategoryNotFoundException} in the global exception handler (thrown by the category
  * lookup {@code CreateTransactionService} makes internally - {@code api} never calls
- * {@code categorisation.application} directly itself), and {@code shared} for
- * {@code CorrelationId} (the create-transaction mapper builds one into the command; the exception
- * handler reads one back off the request attribute). No {@code merchant} dependency - merchant
- * enrichment for the create-transaction response is composed entirely inside
- * {@code transaction.application}. Each business-module entry uses the qualified
- * {@code "module :: application"} syntax - see {@code transaction}'s own package-info for why a
- * bare module name isn't equivalent; {@code shared} stays a bare name since it is {@code type =
- * OPEN} and therefore accessible regardless.
+ * {@code categorisation.application} directly itself), {@code audit} for
+ * {@code GET /api/v1/audit-events} ({@code feature/audit-query} - the first time {@code api}
+ * calls {@code audit.application} directly, via {@code AuditEventController}, not just to catch
+ * an exception thrown internally by another module), and {@code shared} for {@code CorrelationId}
+ * (the create-transaction mapper builds one into the command; the exception handler reads one
+ * back off the request attribute). No {@code merchant} dependency - merchant enrichment for the
+ * create-transaction response is composed entirely inside {@code transaction.application}. Each
+ * business-module entry uses the qualified {@code "module :: application"} syntax - see
+ * {@code transaction}'s own package-info for why a bare module name isn't equivalent;
+ * {@code shared} stays a bare name since it is {@code type = OPEN} and therefore accessible
+ * regardless.
  */
 @org.springframework.modulith.ApplicationModule(
 		allowedDependencies = {
 				"transaction :: application",
 				"aggregation :: application",
 				"categorisation :: application",
+				"audit :: application",
 				"shared"
 		})
 package za.co.tinyiko.transactionaggregation.api;

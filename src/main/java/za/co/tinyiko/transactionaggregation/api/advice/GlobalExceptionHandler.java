@@ -15,6 +15,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import jakarta.servlet.http.HttpServletRequest;
 
+import za.co.tinyiko.transactionaggregation.audit.application.AuditSearchValidationException;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryNotFoundException;
 import za.co.tinyiko.transactionaggregation.categorisation.application.RuleConflictException;
 import za.co.tinyiko.transactionaggregation.categorisation.application.RuleNotFoundException;
@@ -42,7 +43,9 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionV
  * codes this class shipped with in {@code feature/api}, before the conflict was noticed.
  * {@code RULE_NOT_FOUND} (also added in {@code feature/category-admin}) is a genuinely new code,
  * not part of SAD 39.4 - an explicit project decision, since no rule-specific not-found code is
- * documented anywhere (see CLAUDE.md). The two
+ * documented anywhere (see CLAUDE.md). {@code feature/audit-query} adds no new code at all -
+ * {@code AuditSearchValidationException} reuses the existing {@code REQUEST_VALIDATION_FAILED}.
+ * The two
  * 401 codes ({@code AUTHENTICATION_REQUIRED}, {@code TOKEN_INVALID}) and the 403 code
  * ({@code ACCESS_DENIED}) never reach this class at all - see
  * {@code security.ProblemDetailAuthenticationEntryPoint}/{@code ProblemDetailAccessDeniedHandler}.
@@ -120,6 +123,11 @@ class GlobalExceptionHandler {
 
 	@ExceptionHandler(TransactionValidationException.class)
 	ResponseEntity<ProblemDetail> handleTransactionValidation(TransactionValidationException ex, HttpServletRequest request) {
+		return respond(HttpStatus.BAD_REQUEST, REQUEST_VALIDATION_FAILED_CODE, ex.getMessage(), request);
+	}
+
+	@ExceptionHandler(AuditSearchValidationException.class)
+	ResponseEntity<ProblemDetail> handleAuditSearchValidation(AuditSearchValidationException ex, HttpServletRequest request) {
 		return respond(HttpStatus.BAD_REQUEST, REQUEST_VALIDATION_FAILED_CODE, ex.getMessage(), request);
 	}
 
