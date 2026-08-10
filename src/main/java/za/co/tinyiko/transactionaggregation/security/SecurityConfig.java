@@ -59,6 +59,17 @@ import tools.jackson.databind.ObjectMapper;
  * disabled path gets a plain 404 (no matching handler) rather than a 401 that would otherwise leak
  * "this path exists but you're not authenticated for it".
  *
+ * <p>{@code /actuator/prometheus}/{@code /actuator/metrics}/{@code /actuator/metrics/**}
+ * (feature/observability) require the {@code OPERATIONS_READ} authority (SAD 36.4: "Access
+ * selected operational endpoints"; TDS 43: {@code /actuator/metrics} is Admin-only) - the same,
+ * already-mapped authority {@code RoleClaimAuthoritiesConverter} grants to {@code ROLE_ADMIN},
+ * not a newly invented one. Deliberately no second, separately-ordered {@code SecurityFilterChain}
+ * for actuator paths (TDS 67 names a distinct {@code ActuatorSecurityConfig} class, but this
+ * project's own {@code SecurityConfig} already owns every other path-level authorization rule,
+ * including the OpenAPI paths above - adding a second filter chain here would be the one
+ * inconsistent pattern relative to that). {@code /actuator/health} stays {@code permitAll()},
+ * unchanged.
+ *
  * <p>The custom {@code AuthenticationEntryPoint} is registered through
  * {@code oauth2ResourceServer(oauth2 -> oauth2.authenticationEntryPoint(...))}, not the generic
  * {@code exceptionHandling(...).authenticationEntryPoint(...)} - found empirically, not assumed:
@@ -85,6 +96,8 @@ public class SecurityConfig {
 						.requestMatchers("/actuator/health").permitAll()
 						.requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**",
 								"/swagger-ui.html", "/swagger-ui/**").permitAll()
+						.requestMatchers("/actuator/prometheus", "/actuator/metrics", "/actuator/metrics/**")
+								.hasAuthority("OPERATIONS_READ")
 						.anyRequest().authenticated())
 				.oauth2ResourceServer(oauth2 -> oauth2
 						.jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(jwtAuthenticationConverter))

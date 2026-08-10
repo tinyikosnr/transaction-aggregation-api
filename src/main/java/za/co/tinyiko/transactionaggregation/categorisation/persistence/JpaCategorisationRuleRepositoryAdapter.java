@@ -11,6 +11,7 @@ import za.co.tinyiko.transactionaggregation.categorisation.application.RuleNotFo
 import za.co.tinyiko.transactionaggregation.categorisation.domain.CategorisationRule;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.CategorisationRuleId;
 import za.co.tinyiko.transactionaggregation.categorisation.mapper.CategorisationRuleMapper;
+import za.co.tinyiko.transactionaggregation.categorisation.port.ActiveCategorisationRule;
 import za.co.tinyiko.transactionaggregation.categorisation.port.CategorisationRuleRepositoryPort;
 import za.co.tinyiko.transactionaggregation.categorisation.port.CategorisationRuleRow;
 
@@ -61,9 +62,11 @@ class JpaCategorisationRuleRepositoryAdapter implements CategorisationRuleReposi
 	}
 
 	@Override
-	public List<CategorisationRule> findAllActive() {
-		return springDataCategorisationRuleRepository.findAllByActiveTrue().stream()
-				.map(CategorisationRuleMapper::toDomain)
+	public List<ActiveCategorisationRule> findAllActive() {
+		return springDataCategorisationRuleRepository.findAllActiveWithCategoryFallback().stream()
+				.map(row -> new ActiveCategorisationRule(
+						CategorisationRuleMapper.toDomain((CategorisationRuleEntity) row[0]),
+						(Boolean) row[1]))
 				.toList();
 	}
 

@@ -7,9 +7,11 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -33,6 +35,8 @@ import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionDirect
 import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionId;
 import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionSource;
 import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionSourceId;
+import za.co.tinyiko.transactionaggregation.transaction.port.RejectionReason;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionMetricsPort;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionRepositoryPort;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSourceRepositoryPort;
 
@@ -40,6 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -69,13 +75,22 @@ class CreateTransactionServiceTests {
 	private GetCategoryUseCase getCategoryUseCase;
 	@Mock
 	private RecordAuditEventUseCase recordAuditEventUseCase;
+	@Mock
+	private TransactionMetricsPort metrics;
+	@Mock
+	private TransactionMetricsPort.ProcessingTimer processingTimer;
 
 	private final ObjectMapper objectMapper = new ObjectMapper();
+
+	@BeforeEach
+	void setUp() {
+		when(metrics.startProcessingTimer()).thenReturn(processingTimer);
+	}
 
 	private CreateTransactionService service() {
 		return new CreateTransactionService(transactionRepositoryPort, transactionSourceRepositoryPort,
 				customerExistsPort, merchantResolutionPort, categoriseTransactionUseCase, getCategoryUseCase,
-				recordAuditEventUseCase, FIXED_CLOCK, objectMapper);
+				recordAuditEventUseCase, FIXED_CLOCK, objectMapper, metrics);
 	}
 
 	private static TransactionSource activeSource() {
@@ -97,7 +112,7 @@ class CreateTransactionServiceTests {
 				.thenReturn(Optional.empty());
 		when(merchantResolutionPort.resolve("Checkers")).thenReturn(new MerchantResolutionResult(MERCHANT_ID, "Checkers"));
 		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
-				.thenReturn(new CategorisationDecision(CATEGORY_ID, UUID.randomUUID(), "Merchant contained CHECKERS"));
+				.thenReturn(new CategorisationDecision(CATEGORY_ID, UUID.randomUUID(), "Merchant contained CHECKERS", false));
 		when(getCategoryUseCase.get(CATEGORY_ID)).thenReturn(CATEGORY_VIEW);
 		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -115,6 +130,68 @@ class CreateTransactionServiceTests {
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_CREATED");
 		assertThat(auditCaptor.getValue().correlationId()).isEqualTo(CORRELATION_ID);
 		assertThat(auditCaptor.getValue().actor()).isEqualTo(ACTOR);
+
+		verify(metrics).transactionReceived();
+		verify(metrics).transactionProcessed();
+		verify(metrics, never()).categorisationFallback();
+		verify(metrics, never()).transactionRejected(any());
+		verify(metrics, never()).transactionDuplicateRejected();
+		verify(processingTimer).stop();
+	}
+
+	/**
+	 * {@code transactions.processed}/{@code transactions.categorisation.fallback} must only be
+	 * incremented <em>after</em> the success-audit recording itself has already completed - proves
+	 * the exact ordering the design requires, not just that both eventually get called.
+	 */
+	@Test
+	void incrementsProcessedAndFallbackMetricsOnlyAfterSuccessAuditRecordingCompletes() {
+		TransactionSource source = activeSource();
+		when(transactionSourceRepositoryPort.findByCode("MOCK_BANK_A")).thenReturn(Optional.of(source));
+		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(true);
+		when(transactionRepositoryPort.findBySourceIdAndExternalTransactionId(source.id(), "EXT-001"))
+				.thenReturn(Optional.empty());
+		when(merchantResolutionPort.resolve("Checkers")).thenReturn(new MerchantResolutionResult(MERCHANT_ID, "Checkers"));
+		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
+				.thenReturn(new CategorisationDecision(CATEGORY_ID, UUID.randomUUID(), "No specific rule matched; fallback", true));
+		when(getCategoryUseCase.get(CATEGORY_ID)).thenReturn(CATEGORY_VIEW);
+		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		service().create(aCommand());
+
+		verify(metrics).transactionProcessed();
+		verify(metrics).categorisationFallback();
+
+		InOrder order = inOrder(recordAuditEventUseCase, metrics);
+		order.verify(recordAuditEventUseCase).record(any());
+		order.verify(metrics).transactionProcessed();
+		order.verify(metrics).categorisationFallback();
+	}
+
+	/**
+	 * The exact risk the success-metric-placement correction guards against: persistence already
+	 * succeeded, but the success-audit write itself fails and propagates - the workflow never
+	 * reached its completed normal success path, so neither success counter may increment, even
+	 * though the row was physically saved by the (mocked) repository. The timer still stops.
+	 */
+	@Test
+	void doesNotIncrementProcessedOrFallbackMetricsWhenSuccessAuditRecordingFails() {
+		TransactionSource source = activeSource();
+		when(transactionSourceRepositoryPort.findByCode("MOCK_BANK_A")).thenReturn(Optional.of(source));
+		when(customerExistsPort.exists(CUSTOMER_ID)).thenReturn(true);
+		when(transactionRepositoryPort.findBySourceIdAndExternalTransactionId(source.id(), "EXT-001"))
+				.thenReturn(Optional.empty());
+		when(merchantResolutionPort.resolve("Checkers")).thenReturn(new MerchantResolutionResult(MERCHANT_ID, "Checkers"));
+		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
+				.thenReturn(new CategorisationDecision(CATEGORY_ID, UUID.randomUUID(), "Merchant contained CHECKERS", true));
+		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		doThrow(new RuntimeException("audit backend unavailable")).when(recordAuditEventUseCase).record(any());
+
+		assertThatThrownBy(() -> service().create(aCommand())).isInstanceOf(RuntimeException.class);
+
+		verify(metrics, never()).transactionProcessed();
+		verify(metrics, never()).categorisationFallback();
+		verify(processingTimer).stop();
 	}
 
 	@Test
@@ -127,7 +204,7 @@ class CreateTransactionServiceTests {
 		when(merchantResolutionPort.resolve("Dis-Chem Pharmacy"))
 				.thenReturn(new MerchantResolutionResult(MERCHANT_ID, "Dis-Chem Pharmacy"));
 		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
-				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback"));
+				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback", true));
 		when(getCategoryUseCase.get(CATEGORY_ID)).thenReturn(CATEGORY_VIEW);
 		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -150,7 +227,7 @@ class CreateTransactionServiceTests {
 		when(transactionRepositoryPort.findBySourceIdAndExternalTransactionId(source.id(), "EXT-001"))
 				.thenReturn(Optional.empty());
 		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
-				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback"));
+				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback", true));
 		when(getCategoryUseCase.get(CATEGORY_ID)).thenReturn(CATEGORY_VIEW);
 		when(transactionRepositoryPort.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -175,6 +252,12 @@ class CreateTransactionServiceTests {
 		verify(recordAuditEventUseCase).record(auditCaptor.capture());
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_VALIDATION_FAILED");
 		verify(transactionSourceRepositoryPort, never()).findByCode(anyString());
+
+		verify(metrics).transactionReceived();
+		verify(metrics).transactionRejected(RejectionReason.VALIDATION_FAILED);
+		verify(metrics, never()).transactionProcessed();
+		verify(metrics, never()).categorisationFallback();
+		verify(processingTimer).stop();
 	}
 
 	@Test
@@ -189,6 +272,9 @@ class CreateTransactionServiceTests {
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_VALIDATION_FAILED");
 		verify(transactionSourceRepositoryPort, never()).findByCode(anyString());
 		verify(categoriseTransactionUseCase, never()).categorise(any());
+
+		verify(metrics).transactionRejected(RejectionReason.VALIDATION_FAILED);
+		verify(processingTimer).stop();
 	}
 
 	@Test
@@ -201,6 +287,9 @@ class CreateTransactionServiceTests {
 		ArgumentCaptor<RecordAuditEventCommand> auditCaptor = ArgumentCaptor.forClass(RecordAuditEventCommand.class);
 		verify(recordAuditEventUseCase).record(auditCaptor.capture());
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_VALIDATION_FAILED");
+
+		verify(metrics).transactionRejected(RejectionReason.VALIDATION_FAILED);
+		verify(processingTimer).stop();
 	}
 
 	@Test
@@ -213,6 +302,10 @@ class CreateTransactionServiceTests {
 		verify(recordAuditEventUseCase).record(auditCaptor.capture());
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_SOURCE_NOT_FOUND");
 		verify(customerExistsPort, never()).exists(any());
+
+		verify(metrics).transactionRejected(RejectionReason.SOURCE_NOT_FOUND);
+		verify(metrics, never()).transactionProcessed();
+		verify(processingTimer).stop();
 	}
 
 	@Test
@@ -222,6 +315,8 @@ class CreateTransactionServiceTests {
 		when(transactionSourceRepositoryPort.findByCode("MOCK_BANK_A")).thenReturn(Optional.of(inactiveSource));
 
 		assertThatThrownBy(() -> service().create(aCommand())).isInstanceOf(TransactionSourceNotFoundException.class);
+
+		verify(metrics).transactionRejected(RejectionReason.SOURCE_NOT_FOUND);
 	}
 
 	@Test
@@ -236,6 +331,9 @@ class CreateTransactionServiceTests {
 		verify(recordAuditEventUseCase).record(auditCaptor.capture());
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_CUSTOMER_NOT_FOUND");
 		verify(transactionRepositoryPort, never()).findBySourceIdAndExternalTransactionId(any(), anyString());
+
+		verify(metrics).transactionRejected(RejectionReason.CUSTOMER_NOT_FOUND);
+		verify(processingTimer).stop();
 	}
 
 	@Test
@@ -256,6 +354,11 @@ class CreateTransactionServiceTests {
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_DUPLICATE_REJECTED");
 		verify(merchantResolutionPort, never()).resolve(anyString());
 		verify(categoriseTransactionUseCase, never()).categorise(any());
+
+		verify(metrics).transactionDuplicateRejected();
+		verify(metrics, never()).transactionRejected(any());
+		verify(metrics, never()).transactionProcessed();
+		verify(processingTimer).stop();
 	}
 
 	@Test
@@ -266,7 +369,7 @@ class CreateTransactionServiceTests {
 		when(transactionRepositoryPort.findBySourceIdAndExternalTransactionId(source.id(), "EXT-001"))
 				.thenReturn(Optional.empty());
 		when(categoriseTransactionUseCase.categorise(any(CategorisationInput.class)))
-				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback"));
+				.thenReturn(new CategorisationDecision(CATEGORY_ID, null, "fallback", true));
 		when(transactionRepositoryPort.save(any(Transaction.class)))
 				.thenThrow(new DuplicateTransactionException(source.id().value(), "EXT-001"));
 
@@ -275,6 +378,11 @@ class CreateTransactionServiceTests {
 		ArgumentCaptor<RecordAuditEventCommand> auditCaptor = ArgumentCaptor.forClass(RecordAuditEventCommand.class);
 		verify(recordAuditEventUseCase).record(auditCaptor.capture());
 		assertThat(auditCaptor.getValue().eventType()).isEqualTo("TRANSACTION_DUPLICATE_REJECTED");
+
+		verify(metrics).transactionDuplicateRejected();
+		verify(metrics, never()).transactionProcessed();
+		verify(metrics, never()).categorisationFallback();
+		verify(processingTimer).stop();
 	}
 
 }

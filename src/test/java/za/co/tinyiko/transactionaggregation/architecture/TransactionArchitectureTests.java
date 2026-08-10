@@ -40,7 +40,9 @@ import za.co.tinyiko.transactionaggregation.transaction.port.CategoryTotalsRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.CustomerTotalsRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.MerchantTotalsRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.MonthlyTotalsRow;
+import za.co.tinyiko.transactionaggregation.transaction.port.RejectionReason;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionDetailRow;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionMetricsPort;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionRepositoryPort;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSearchPage;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSearchQuery;
@@ -118,13 +120,15 @@ class TransactionArchitectureTests {
 			TransactionDetailRow.class,
 			TransactionSearchRow.class,
 			TransactionSearchQuery.class,
-			TransactionSearchPage.class
+			TransactionSearchPage.class,
+			TransactionMetricsPort.class,
+			RejectionReason.class
 	);
 
 	@Test
 	void domainDoesNotReferenceFrameworkTypes() {
 		DOMAIN_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(
-				type, "org.springframework", "jakarta.persistence"));
+				type, "org.springframework", "jakarta.persistence", "io.micrometer"));
 	}
 
 	@Test
@@ -137,6 +141,22 @@ class TransactionArchitectureTests {
 	void portDoesNotReferenceApplication() {
 		PORT_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(
 				type, "za.co.tinyiko.transactionaggregation.transaction.application"));
+	}
+
+	/**
+	 * {@code TransactionMetricsPort} itself (feature/observability) must expose no Micrometer
+	 * type through its method signatures - {@code ProcessingTimer} is a framework-independent
+	 * nested interface, not {@code Timer.Sample}. {@code MicrometerTransactionMetrics} (the sole
+	 * implementation, in {@code transaction.metrics}) is package-private and therefore not
+	 * reflectable from this test package - the same limitation already documented for every other
+	 * package-private {@code @Service}/adapter in this codebase (e.g. {@code CreateTransactionService}
+	 * itself is not in {@code APPLICATION_TYPES} either); its own source was written to import
+	 * {@code io.micrometer.*} nowhere else in this module.
+	 */
+	@Test
+	void applicationAndPortDoNotReferenceMicrometer() {
+		APPLICATION_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(type, "io.micrometer"));
+		PORT_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(type, "io.micrometer"));
 	}
 
 }
