@@ -26,6 +26,9 @@ import za.co.tinyiko.transactionaggregation.transaction.domain.Transaction;
 import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionDirection;
 import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionId;
 import za.co.tinyiko.transactionaggregation.transaction.domain.TransactionSource;
+import za.co.tinyiko.transactionaggregation.transaction.port.RejectionReason;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionMetricsPort;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionMetricsPort.ProcessingTimer;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionRepositoryPort;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSourceRepositoryPort;
 
@@ -45,6 +48,24 @@ import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSourceRe
  * {@code "SYSTEM"} placeholder now that real authenticated identity exists (see
  * {@link CreateTransactionCommand}'s own Javadoc for why this module never sees a JWT/Authentication
  * type directly).
+ *
+ * <p><strong>Metrics (feature/observability):</strong> {@link TransactionMetricsPort} is a plain,
+ * best-effort, in-process operational signal, never a transactionally-guaranteed post-commit
+ * record and never a substitute for the audit trail above. The {@link ProcessingTimer} is started
+ * before the {@code try} block and stopped in a {@code finally}, so
+ * {@code transactions.processing.duration} measures every outcome - success, an expected
+ * rejection, a duplicate, an audit-recording failure, or an unexpected systemic exception -
+ * exactly like the boundary the surrounding {@code @Transactional} proxy itself spans.
+ * {@code transactions.processed}/{@code transactions.categorisation.fallback} are deliberately
+ * incremented only <em>after</em> {@link #recordSuccess} has itself already completed without
+ * throwing, not immediately after {@code persist(...)} succeeds: {@code recordSuccess} calls
+ * {@code RecordAuditEventUseCase#record}, which runs in its own {@code REQUIRES_NEW} transaction
+ * and can itself fail and propagate out of {@link #create}, rolling back the just-persisted
+ * {@code Transaction} row along with everything else in this method's own transaction. Recording
+ * "processed" any earlier would risk counting a transaction whose surrounding transaction later
+ * rolled back - these counters mean "the workflow reached its completed normal success path",
+ * not "the database transaction has since committed" (no {@code TransactionSynchronization}/
+ * {@code afterCommit} hook is introduced merely for metrics).
  */
 @Service
 class CreateTransactionService implements CreateTransactionUseCase {
@@ -60,6 +81,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 	private final RecordAuditEventUseCase recordAuditEventUseCase;
 	private final Clock clock;
 	private final ObjectMapper objectMapper;
+	private final TransactionMetricsPort metrics;
 
 	CreateTransactionService(
 			TransactionRepositoryPort transactionRepositoryPort,
@@ -70,7 +92,8 @@ class CreateTransactionService implements CreateTransactionUseCase {
 			GetCategoryUseCase getCategoryUseCase,
 			RecordAuditEventUseCase recordAuditEventUseCase,
 			Clock clock,
-			ObjectMapper objectMapper
+			ObjectMapper objectMapper,
+			TransactionMetricsPort metrics
 	) {
 		this.transactionRepositoryPort = transactionRepositoryPort;
 		this.transactionSourceRepositoryPort = transactionSourceRepositoryPort;
@@ -81,31 +104,42 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		this.recordAuditEventUseCase = recordAuditEventUseCase;
 		this.clock = clock;
 		this.objectMapper = objectMapper;
+		this.metrics = metrics;
 	}
 
 	@Override
 	@Transactional
 	public TransactionCreatedResult create(CreateTransactionCommand command) {
-		TransactionId transactionId = TransactionId.generate();
-		CorrelationId correlationId = command.correlationId();
+		metrics.transactionReceived();
+		ProcessingTimer timer = metrics.startProcessingTimer();
+		try {
+			TransactionId transactionId = TransactionId.generate();
+			CorrelationId correlationId = command.correlationId();
 
-		Money amount = buildMoney(command, transactionId, correlationId);
-		TransactionDirection direction = parseDirection(command, transactionId, correlationId);
+			Money amount = buildMoney(command, transactionId, correlationId);
+			TransactionDirection direction = parseDirection(command, transactionId, correlationId);
 
-		TransactionSource source = resolveSource(command, transactionId, correlationId);
-		validateCustomer(command, transactionId, correlationId);
-		checkForDuplicate(command, source, transactionId, correlationId);
+			TransactionSource source = resolveSource(command, transactionId, correlationId);
+			validateCustomer(command, transactionId, correlationId);
+			checkForDuplicate(command, source, transactionId, correlationId);
 
-		MerchantResolutionResult merchant = resolveMerchant(command);
-		CategorisationDecision decision = categorise(command, merchant, direction);
+			MerchantResolutionResult merchant = resolveMerchant(command);
+			CategorisationDecision decision = categorise(command, merchant, direction);
 
-		Transaction transaction = registerTransaction(command, transactionId, source, merchant, decision, amount, direction, correlationId);
-		Transaction saved = persist(transaction, source, command, correlationId);
+			Transaction transaction = registerTransaction(command, transactionId, source, merchant, decision, amount, direction, correlationId);
+			Transaction saved = persist(transaction, source, command, correlationId);
 
-		recordSuccess(saved, decision, correlationId, command.actor());
+			recordSuccess(saved, decision, correlationId, command.actor());
+			metrics.transactionProcessed();
+			if (decision.fallbackApplied()) {
+				metrics.categorisationFallback();
+			}
 
-		CategoryView category = getCategoryUseCase.get(decision.categoryId());
-		return toResult(saved, source, merchant, category);
+			CategoryView category = getCategoryUseCase.get(decision.categoryId());
+			return toResult(saved, source, merchant, category);
+		} finally {
+			timer.stop();
+		}
 	}
 
 	private TransactionCreatedResult toResult(Transaction transaction, TransactionSource source, MerchantResolutionResult merchant, CategoryView category) {
@@ -137,6 +171,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 			return money;
 		} catch (IllegalArgumentException e) {
 			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, command.actor(), e.getMessage());
+			metrics.transactionRejected(RejectionReason.VALIDATION_FAILED);
 			throw new TransactionValidationException(e.getMessage(), e);
 		}
 	}
@@ -146,6 +181,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 			return TransactionDirection.valueOf(command.direction());
 		} catch (IllegalArgumentException e) {
 			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, command.actor(), e.getMessage());
+			metrics.transactionRejected(RejectionReason.VALIDATION_FAILED);
 			throw new TransactionValidationException("direction must be CREDIT or DEBIT", e);
 		}
 	}
@@ -155,6 +191,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		if (source.isEmpty() || !source.get().isActive()) {
 			recordFailure(transactionId, "TRANSACTION_SOURCE_NOT_FOUND", correlationId, command.actor(),
 					"source code: " + command.sourceCode());
+			metrics.transactionRejected(RejectionReason.SOURCE_NOT_FOUND);
 			throw new TransactionSourceNotFoundException(command.sourceCode());
 		}
 		return source.get();
@@ -164,6 +201,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		if (!customerExistsPort.exists(command.customerId())) {
 			recordFailure(transactionId, "TRANSACTION_CUSTOMER_NOT_FOUND", correlationId, command.actor(),
 					"customer id: " + command.customerId());
+			metrics.transactionRejected(RejectionReason.CUSTOMER_NOT_FOUND);
 			throw new CustomerNotFoundException(command.customerId());
 		}
 	}
@@ -175,6 +213,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		if (exists) {
 			recordFailure(transactionId, "TRANSACTION_DUPLICATE_REJECTED", correlationId, command.actor(),
 					"source: " + command.sourceCode() + ", externalTransactionId: " + command.externalTransactionId());
+			metrics.transactionDuplicateRejected();
 			throw new DuplicateTransactionException(source.id().value(), command.externalTransactionId());
 		}
 	}
@@ -217,6 +256,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 					clock);
 		} catch (IllegalArgumentException e) {
 			recordFailure(transactionId, "TRANSACTION_VALIDATION_FAILED", correlationId, command.actor(), e.getMessage());
+			metrics.transactionRejected(RejectionReason.VALIDATION_FAILED);
 			throw new TransactionValidationException(e.getMessage(), e);
 		}
 	}
@@ -227,6 +267,7 @@ class CreateTransactionService implements CreateTransactionUseCase {
 		} catch (DuplicateTransactionException e) {
 			recordFailure(transaction.id(), "TRANSACTION_DUPLICATE_REJECTED", correlationId, command.actor(),
 					"source: " + source.code() + ", externalTransactionId: " + command.externalTransactionId());
+			metrics.transactionDuplicateRejected();
 			throw e;
 		}
 	}

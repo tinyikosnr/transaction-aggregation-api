@@ -4,8 +4,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +21,7 @@ import za.co.tinyiko.transactionaggregation.categorisation.domain.Direction;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.MatchField;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.MatchOperator;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCategoryId;
+import za.co.tinyiko.transactionaggregation.categorisation.port.ActiveCategorisationRule;
 import za.co.tinyiko.transactionaggregation.categorisation.port.CategorisationRuleRow;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,17 +62,21 @@ class JpaCategorisationRuleRepositoryAdapterTests {
 		return adapter.create(rule);
 	}
 
+	private static List<CategorisationRule> rulesOf(List<ActiveCategorisationRule> activeRules) {
+		return activeRules.stream().map(ActiveCategorisationRule::rule).toList();
+	}
+
 	@Test
 	void findAllActiveReturnsAllSeededRules() {
-		List<CategorisationRule> rules = adapter.findAllActive();
+		List<ActiveCategorisationRule> activeRules = adapter.findAllActive();
 
-		assertThat(rules).hasSize(40);
-		assertThat(rules).allMatch(CategorisationRule::active);
+		assertThat(activeRules).hasSize(40);
+		assertThat(rulesOf(activeRules)).allMatch(CategorisationRule::active);
 	}
 
 	@Test
 	void seededRulesIncludeTheFuelMerchantKeyword() {
-		List<CategorisationRule> rules = adapter.findAllActive();
+		List<CategorisationRule> rules = rulesOf(adapter.findAllActive());
 
 		assertThat(rules).anySatisfy(rule -> {
 			assertThat(rule.matchField()).isEqualTo(MatchField.MERCHANT);
@@ -86,7 +89,7 @@ class JpaCategorisationRuleRepositoryAdapterTests {
 
 	@Test
 	void seededRulesIncludeBothDirectionWideCatchAlls() {
-		List<CategorisationRule> rules = adapter.findAllActive();
+		List<CategorisationRule> rules = rulesOf(adapter.findAllActive());
 
 		assertThat(rules).anySatisfy(rule -> {
 			assertThat(rule.priority()).isEqualTo(999);
@@ -99,6 +102,27 @@ class JpaCategorisationRuleRepositoryAdapterTests {
 			assertThat(rule.direction()).isEqualTo(Direction.DEBIT);
 			assertThat(rule.operator()).isEqualTo(MatchOperator.REGEX);
 			assertThat(rule.matchValue()).isEqualTo(".*");
+		});
+	}
+
+	/**
+	 * The join {@code findAllActive()} now performs (feature/observability) must report the
+	 * seeded priority-1000 DEBIT catch-all rule's target category (UNCATEGORISED) as the fallback
+	 * category, and an ordinary, specific rule's target category (GROCERIES) as not - proving the
+	 * enrichment reads the real {@code is_fallback} column, not a hard-coded assumption.
+	 */
+	@Test
+	void reportsCategoryIsFallbackCorrectlyForTheCatchAllRuleAndAnOrdinaryRule() {
+		List<ActiveCategorisationRule> activeRules = adapter.findAllActive();
+
+		assertThat(activeRules).anySatisfy(activeRule -> {
+			assertThat(activeRule.rule().priority()).isEqualTo(1000);
+			assertThat(activeRule.rule().direction()).isEqualTo(Direction.DEBIT);
+			assertThat(activeRule.categoryIsFallback()).isTrue();
+		});
+		assertThat(activeRules).anySatisfy(activeRule -> {
+			assertThat(activeRule.rule().matchValue()).isEqualTo("SHELL");
+			assertThat(activeRule.categoryIsFallback()).isFalse();
 		});
 	}
 
@@ -160,13 +184,13 @@ class JpaCategorisationRuleRepositoryAdapterTests {
 	void deactivatingARuleRemovesItFromFindAllActive() {
 		CategorisationRuleRow created = insertRule();
 		CategorisationRuleId id = new CategorisationRuleId(created.id());
-		assertThat(adapter.findAllActive()).extracting(CategorisationRule::id).contains(id);
+		assertThat(rulesOf(adapter.findAllActive())).extracting(CategorisationRule::id).contains(id);
 
 		CategorisationRule deactivated = CategorisationRule.update(id, aRealCategoryId(),
 				MatchField.MERCHANT, MatchOperator.CONTAINS, "TESTMERCHANT", Direction.DEBIT, 5, false, FIXED_CLOCK);
 		adapter.update(id, deactivated, created.version());
 
-		assertThat(adapter.findAllActive()).extracting(CategorisationRule::id).doesNotContain(id);
+		assertThat(rulesOf(adapter.findAllActive())).extracting(CategorisationRule::id).doesNotContain(id);
 	}
 
 }

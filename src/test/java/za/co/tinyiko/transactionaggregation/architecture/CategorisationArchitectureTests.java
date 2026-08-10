@@ -30,6 +30,7 @@ import za.co.tinyiko.transactionaggregation.categorisation.domain.MatchField;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.MatchOperator;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCategory;
 import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCategoryId;
+import za.co.tinyiko.transactionaggregation.categorisation.port.ActiveCategorisationRule;
 import za.co.tinyiko.transactionaggregation.categorisation.port.CategorisationRuleRepositoryPort;
 import za.co.tinyiko.transactionaggregation.categorisation.port.CategorisationRuleRow;
 import za.co.tinyiko.transactionaggregation.categorisation.port.CategoryRepositoryPort;
@@ -85,7 +86,8 @@ class CategorisationArchitectureTests {
 	private static final List<Class<?>> PORT_TYPES = List.of(
 			CategoryRepositoryPort.class,
 			CategorisationRuleRepositoryPort.class,
-			CategorisationRuleRow.class
+			CategorisationRuleRow.class,
+			ActiveCategorisationRule.class
 	);
 
 	@Test
