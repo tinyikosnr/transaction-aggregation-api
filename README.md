@@ -2,7 +2,7 @@
 
 A modular-monolith Spring Boot service that ingests financial transactions from multiple upstream sources, validates and categorises them, and exposes REST APIs for retrieval and financial aggregation.
 
-> **Status:** All planned bounded contexts are implemented and secured (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api` → `security`), plus four post-MVP branches: `feature/transaction-query` (transaction retrieval and search), `feature/transaction-bulk` (bulk transaction creation with partial success), `feature/category-admin` (category/categorisation-rule administration), and `feature/audit-query` (audit-event search — see [Audit Event Query](#audit-event-query) for the explicit scope decisions this branch required, since SAD/TDS document its existence but not its contract). The REST API is wired up, authenticated via JWT bearer tokens, and authorized per SAD 36.4/TDS 42/ADR-016, tested end-to-end. The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
+> **Status:** All planned bounded contexts are implemented and secured (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api` → `security`), plus five post-MVP branches: `feature/transaction-query` (transaction retrieval and search), `feature/transaction-bulk` (bulk transaction creation with partial success), `feature/category-admin` (category/categorisation-rule administration), `feature/audit-query` (audit-event search — see [Audit Event Query](#audit-event-query) for the explicit scope decisions this branch required, since SAD/TDS document its existence but not its contract), and `feature/openapi-documentation` (generated OpenAPI/Swagger UI documentation — see [OpenAPI / Swagger Documentation](#openapi--swagger-documentation)). The REST API is wired up, authenticated via JWT bearer tokens, and authorized per SAD 36.4/TDS 42/ADR-016, tested end-to-end. The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
 
 ---
 
@@ -69,6 +69,7 @@ Full diagrams (C4 context/container, module dependencies, component, ER, sequenc
 | Migrations | Flyway (`flyway-database-postgresql`) |
 | Security | Spring Security + OAuth2 Resource Server (JWT bearer, RS256, issuer/audience validation) — see [Security](#security) |
 | Validation | Spring Validation (Jakarta Bean Validation) |
+| API documentation | springdoc-openapi 3.0.3 (OpenAPI 3.1 + Swagger UI) — see [OpenAPI / Swagger Documentation](#openapi--swagger-documentation) |
 | Observability | Spring Boot Actuator, Micrometer, Prometheus registry |
 | Build | Maven (via `mvnw` wrapper) |
 | Containers (dev) | Docker Compose, Spring Boot Docker Compose support |
@@ -89,11 +90,11 @@ See [`Solution_Architecture_Document(SAD)_v_2_Part_6B_Governance_and_Reference.m
 - Correlation-ID propagation: honours a client-supplied `X-Correlation-ID`, generates one when absent, returns it on every response (success or error), threads it through to audit events, and places it in the logging MDC for the duration of the request.
 - RFC 9457 (`application/problem+json`) error responses with an `errorCode`/`correlationId`/`timestamp` extension shape, covering every documented failure scenario for the implemented endpoints, including authentication/authorization failures.
 - JWT bearer authentication (OAuth2 Resource Server) and `@PreAuthorize`-enforced, fine-grained authority checks on every implemented endpoint, per the approved role-to-authority mapping (ADR-016) — see [Security](#security).
+- Generated OpenAPI 3.1 documentation (`springdoc-openapi`) and Swagger UI, covering all 11 business endpoints — enabled under the `local` profile only, disabled by default/production — see [OpenAPI / Swagger Documentation](#openapi--swagger-documentation).
 
 **Not yet implemented** (documented in the SAD/TDS but out of scope so far — see [`CLAUDE.md`](CLAUDE.md) for the exact exclusion rationale):
 
 - Any customer/merchant/categorisation-admin/audit CRUD or read endpoint (no documented HTTP contract, or no backing use case, for any of these today) — the authorities for them (`CUSTOMER_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ`) are defined in the approved mapping but have nothing to attach to yet.
-- OpenAPI/Swagger generation.
 - Actuator liveness/readiness probes (only the default `/actuator/health` is exposed today) and restricting `/actuator/metrics`/`/env`/`/loggers`.
 
 Full functional and non-functional requirements: [Part 2 – Requirements](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_2_Requirements.md).
@@ -143,7 +144,7 @@ Each module's internal layering (`domain`, `application`, `port`, `persistence`,
 | `audit` | `audit_events` | Append-only business event trail. |
 | `api` | *(none)* | REST controllers, request/response DTOs, Bean Validation, RFC 9457 error mapping. Depends only on each module's `application`-layer ports. |
 | `security` | *(none)* | JWT resource-server configuration, role→authority mapping, RFC 9457-shaped 401/403 responses. Only `SecurityConfig` is public; its collaborators are package-private. |
-| `config` | — | Cross-cutting, security-independent configuration: `ClockConfig`, `CorrelationIdFilter`. |
+| `config` | — | Cross-cutting, security-independent configuration: `ClockConfig`, `CorrelationIdFilter`, `OpenApiConfig`. |
 
 Ownership rules, dependency directions, and data-access rules: [Part 4 – Domain & Data, 31](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_4_Domain_and_Data.md) and [Part 3 – Architecture, 21](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_3_Architecture.md).
 
@@ -211,7 +212,7 @@ The test stack uses JUnit 5, Mockito, Spring Boot Test (including `@WebMvcTest` 
 
 ## API Documentation
 
-The API is versioned under `/api/v1`. Every endpoint below requires a valid JWT bearer token and the listed authority — see [Security](#security). OpenAPI/Swagger generation (`springdoc-openapi`) is specified in the architecture but remains deliberately deferred.
+The API is versioned under `/api/v1`. Every endpoint below requires a valid JWT bearer token and the listed authority — see [Security](#security). A generated OpenAPI document and Swagger UI are also available under the `local` profile — see [OpenAPI / Swagger Documentation](#openapi--swagger-documentation).
 
 | Endpoint | Method | Required authority | Description |
 |---|---|---|---|
@@ -295,6 +296,36 @@ Results preserve submission order. `status` is one of `CREATED`, `CONFLICT`, `FA
 
 **No new error code, no new migration.** Every validation failure reuses the existing `REQUEST_VALIDATION_FAILED`. All three query predicates (aggregate pair, `correlationId`, `occurredAt` range/sort) are already covered by the three indexes `feature/audit` originally created; `actor`/`eventType` alone stay unindexed, deliberately deferred pending real usage evidence rather than added speculatively against a write-heavy, append-only table.
 
+## OpenAPI / Swagger Documentation
+
+`feature/openapi-documentation` adds generated API documentation (SAD 35.9) via `springdoc-openapi-starter-webmvc-ui:3.0.3` — the first release published against Spring Boot 4.0.x, empirically verified (dependency resolution, `clean compile`, application context start, and a real `GET /v3/api-docs` call all confirmed passing) to also work cleanly against this project's Spring Boot 4.1.0, before any annotation work began.
+
+**Endpoints:**
+- `GET /v3/api-docs` — the generated OpenAPI 3.1 JSON document (also available as `/v3/api-docs.yaml`).
+- `GET /swagger-ui.html` (redirects to `/swagger-ui/index.html`) — interactive Swagger UI.
+
+**Enabled under `local` only, disabled by default/production** — an explicit project decision (not a documentation gap: SAD 35.9 says exposure "should be restricted or disabled in production according to deployment policy" without naming a mechanism). No portal, pipeline, or external consumer currently depends on either endpoint, so the conservative reading disables both by default:
+
+```properties
+# application.properties (default/production)
+springdoc.api-docs.enabled=false
+springdoc.swagger-ui.enabled=false
+
+# application-local.properties (local profile only)
+springdoc.api-docs.enabled=true
+springdoc.swagger-ui.enabled=true
+```
+
+Run locally with `./mvnw spring-boot:run -Dspring-boot.run.profiles=local` (see [Local development](#security) below) and browse `http://localhost:8080/swagger-ui.html`.
+
+**Security** — `security.SecurityConfig` grants `permitAll()` to the five OpenAPI/Swagger paths unconditionally (the same treatment as `/actuator/health`), regardless of profile; whether they serve anything is controlled entirely by the `springdoc.*.enabled` properties above, not by the filter chain. This is deliberate: a disabled path under `permitAll()` reaches Spring MVC and returns a plain `404`, rather than a `401` that would otherwise leak "this path exists but you're not authenticated for it".
+
+**Content** — one HTTP bearer/JWT security scheme (`bearerAuth`), applied globally; the five fine-grained authorities (`TRANSACTION_READ`, `TRANSACTION_WRITE`, `AGGREGATION_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`) are documented as plain-text `@PreAuthorize` authorities in each operation's description, never modelled as OAuth2 scopes (this API validates externally-issued JWTs, it does not issue them). Four tags group the 11 documented endpoints: `Transactions`, `Aggregation`, `Category Administration`, `Audit`. `Info.version` is the literal external API contract version `"v1"` (matching the `/api/v1` path prefix), not the Maven artifact version.
+
+**A genuine Jackson 3/Jackson 2 coexistence nuance, found empirically, not assumed:** springdoc 3.0.3 bundles its own internal Jackson 2 stack (via `swagger-core-jakarta`) for schema introspection, entirely separate from this project's own Jackson 3 REST serialization. `AuditEventResponse.eventData` (`tools.jackson.databind.JsonNode`, Jackson 3) is not recognised by springdoc's Jackson-2-based schema resolver as a JSON node type; declaring `@Schema(type = "object", implementation = Object.class)` on it avoids the misleading fallback (rendering it as a schema of type `"string"`) by instead producing an unconstrained "any value" schema (no `type` keyword — valid OpenAPI 3.1/JSON Schema for "any type"). This only affects the generated *schema documentation*; the real runtime response already embedded `eventData` as a genuine nested JSON object before this branch (proved by `AuditEventControllerTests`) and is unaffected.
+
+**Scope boundary, enforced at build time** — `architecture.OpenApiArchitectureTests` scans every compiled class under the application's base package and fails the build if an OpenAPI annotation (`io.swagger.v3.oas.annotations.*`) appears anywhere outside `api.controller`, `api.dto`, or `config` — no domain, application, port, or persistence class in any module should ever need to import a Swagger type.
+
 ## Security
 
 The temporary permit-all posture from `feature/api` has been replaced with the real, documented model (SAD 36, TDS 41–44, ADR-007, ADR-016). Every endpoint requires a valid JWT bearer token; the previous default-auto-configuration risk (HTTP Basic with a random per-boot password) no longer applies either way, since a real `SecurityFilterChain` bean is always defined.
@@ -350,7 +381,7 @@ Documentation must be kept in sync with the code — see [`CLAUDE.md`](CLAUDE.md
 
 ## Future Roadmap
 
-**Near-term:** OpenAPI/Swagger generation, actuator liveness/readiness probes and restricting non-health actuator endpoints, a structured reason on `TransactionValidationException` (to reach TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes instead of the current generic `REQUEST_VALIDATION_FAILED`), a focused Testcontainers concurrent-duplicate-write test against `JpaTransactionRepositoryAdapter` (considered during `feature/transaction-bulk` and deliberately deferred, since bulk itself introduces no new concurrency), category create/update/deactivate/delete (deliberately excluded from `feature/category-admin` pending a project decision — see [Category & Rule Administration](#category--rule-administration)), rule physical deletion, admin audit events, audit-event get-by-id, `actor`/`eventType` audit indexes (deferred pending real usage evidence — see [Audit Event Query](#audit-event-query)), audit export/retention/SIEM integration.
+**Near-term:** actuator liveness/readiness probes and restricting non-health actuator endpoints, a structured reason on `TransactionValidationException` (to reach TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes instead of the current generic `REQUEST_VALIDATION_FAILED`), a focused Testcontainers concurrent-duplicate-write test against `JpaTransactionRepositoryAdapter` (considered during `feature/transaction-bulk` and deliberately deferred, since bulk itself introduces no new concurrency), category create/update/deactivate/delete (deliberately excluded from `feature/category-admin` pending a project decision — see [Category & Rule Administration](#category--rule-administration)), rule physical deletion, admin audit events, audit-event get-by-id, `actor`/`eventType` audit indexes (deferred pending real usage evidence — see [Audit Event Query](#audit-event-query)), audit export/retention/SIEM integration.
 
 **Functional:** multi-currency support, user-defined categorisation rules, scheduled recurring reports, additional provider integrations, notifications/subscriptions.
 
@@ -383,7 +414,7 @@ feature/categorisation → feature/audit → feature/transaction → feature/agg
 feature/api → feature/security
 ```
 
-Every branch in the original sequence is now complete, plus four post-MVP branches: `feature/transaction-query`, adding transaction retrieval/search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions` — FR-08, UC-03, UC-04, TDS 30-31); `feature/transaction-bulk`, adding bulk transaction creation with partial success (`POST /api/v1/transactions/bulk` — FR-02, UC-02, SAD 32.5/35.2/39.8, TDS 29); `feature/category-admin`, adding category/categorisation-rule administration; and `feature/audit-query`, adding audit-event search (`GET /api/v1/audit-events` — SAD 31.2's "operational and compliance queries") on top of the already-secured API — the second branch in a row whose scope was not fully derivable from SAD/TDS and required explicit project decisions instead (see [Category & Rule Administration](#category--rule-administration) and [Audit Event Query](#audit-event-query)).
+Every branch in the original sequence is now complete, plus five post-MVP branches: `feature/transaction-query`, adding transaction retrieval/search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions` — FR-08, UC-03, UC-04, TDS 30-31); `feature/transaction-bulk`, adding bulk transaction creation with partial success (`POST /api/v1/transactions/bulk` — FR-02, UC-02, SAD 32.5/35.2/39.8, TDS 29); `feature/category-admin`, adding category/categorisation-rule administration; `feature/audit-query`, adding audit-event search (`GET /api/v1/audit-events` — SAD 31.2's "operational and compliance queries") on top of the already-secured API — the second branch in a row whose scope was not fully derivable from SAD/TDS and required explicit project decisions instead (see [Category & Rule Administration](#category--rule-administration) and [Audit Event Query](#audit-event-query)); and `feature/openapi-documentation`, adding generated OpenAPI/Swagger documentation for all 11 endpoints, gated by an empirical Springdoc/Spring-Boot-4.1 compatibility check before any annotation work began (see [OpenAPI / Swagger Documentation](#openapi--swagger-documentation)).
 
 `feature/project-structure` established only the package skeleton, Spring Modulith module boundaries, architecture verification tests, and shared configuration structure — no business logic. `categorisation` and `audit` were built before `transaction` because the transaction ingestion workflow depends on both (assigning a category and recording an audit event are part of processing a transaction, not features bolted on afterwards). `aggregation` came after `transaction` because it only reads transaction data that must already exist. `api` wired already-completed use cases to HTTP without introducing new business behaviour, behind a temporary permit-all posture. `feature/security` replaced that posture with the real, documented JWT/RBAC model last, since it needed real HTTP endpoints to secure. `feature/transaction-query` came after all ten, as the first post-MVP gap-analysis-driven branch, adding two new `TRANSACTION_READ`-protected read endpoints and the batch (not per-row) cross-module enrichment lookups they need. `feature/transaction-bulk` followed, adding the documented bulk-create capability by calling the existing single-create use case once per item — see [Bulk Transaction Creation](#bulk-transaction-creation) for its partial-success/duplicate/error semantics. See [`CLAUDE.md`](CLAUDE.md#implementation-rules) for the full rationale. Before implementing a feature:
 

@@ -48,6 +48,17 @@ import tools.jackson.databind.ObjectMapper;
  * convention, "documentation only" until now). {@code authorizeHttpRequests} below only
  * distinguishes public from authenticated - it never repeats an authority check.
  *
+ * <p>The OpenAPI/Swagger UI paths ({@code /v3/api-docs}, {@code /v3/api-docs.yaml},
+ * {@code /v3/api-docs/**}, {@code /swagger-ui.html}, {@code /swagger-ui/**} - the exact set
+ * springdoc-openapi 3.0.3 registers, confirmed empirically rather than assumed from its docs) are
+ * {@code permitAll()} unconditionally, the same as {@code /actuator/health}: whether they actually
+ * serve anything is controlled per-profile by {@code springdoc.api-docs.enabled}/
+ * {@code springdoc.swagger-ui.enabled} (disabled by default/production, enabled under
+ * {@code local} - see {@code application.properties}/{@code application-local.properties}), not by
+ * this filter chain. Leaving them {@code permitAll()} even when disabled means a request against a
+ * disabled path gets a plain 404 (no matching handler) rather than a 401 that would otherwise leak
+ * "this path exists but you're not authenticated for it".
+ *
  * <p>The custom {@code AuthenticationEntryPoint} is registered through
  * {@code oauth2ResourceServer(oauth2 -> oauth2.authenticationEntryPoint(...))}, not the generic
  * {@code exceptionHandling(...).authenticationEntryPoint(...)} - found empirically, not assumed:
@@ -72,6 +83,8 @@ public class SecurityConfig {
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers("/actuator/health").permitAll()
+						.requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**",
+								"/swagger-ui.html", "/swagger-ui/**").permitAll()
 						.anyRequest().authenticated())
 				.oauth2ResourceServer(oauth2 -> oauth2
 						.jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(jwtAuthenticationConverter))
