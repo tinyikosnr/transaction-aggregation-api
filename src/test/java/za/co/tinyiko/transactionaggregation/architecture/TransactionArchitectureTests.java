@@ -4,9 +4,14 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkCreateTransactionsCommand;
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkTransactionItemInput;
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkTransactionItemResult;
+import za.co.tinyiko.transactionaggregation.transaction.application.BulkTransactionResult;
 import za.co.tinyiko.transactionaggregation.transaction.application.CategoryTransactionTotal;
 import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionCommand;
 import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionUseCase;
+import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransactionsBulkUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.CustomerNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.CustomerTransactionTotals;
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
@@ -82,7 +87,12 @@ class TransactionArchitectureTests {
 			SearchTransactionsUseCase.class,
 			TransactionSearchCriteria.class,
 			TransactionSearchResultItem.class,
-			PagedResult.class
+			PagedResult.class,
+			CreateTransactionsBulkUseCase.class,
+			BulkCreateTransactionsCommand.class,
+			BulkTransactionItemInput.class,
+			BulkTransactionItemResult.class,
+			BulkTransactionResult.class
 	);
 
 	/**

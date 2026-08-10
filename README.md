@@ -2,7 +2,7 @@
 
 A modular-monolith Spring Boot service that ingests financial transactions from multiple upstream sources, validates and categorises them, and exposes REST APIs for retrieval and financial aggregation.
 
-> **Status:** All planned bounded contexts are implemented and secured (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api` → `security`), plus one post-MVP branch, `feature/transaction-query`, adding transaction retrieval and search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions`). The REST API is wired up, authenticated via JWT bearer tokens, and authorized per SAD 36.4/TDS 42/ADR-016, tested end-to-end. The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
+> **Status:** All planned bounded contexts are implemented and secured (`project-structure` → `shared` → `customer` → `merchant` → `categorisation` → `audit` → `transaction` → `aggregation` → `api` → `security`), plus two post-MVP branches: `feature/transaction-query`, adding transaction retrieval and search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions`), and `feature/transaction-bulk`, adding bulk transaction creation with partial success (`POST /api/v1/transactions/bulk`). The REST API is wired up, authenticated via JWT bearer tokens, and authorized per SAD 36.4/TDS 42/ADR-016, tested end-to-end. The SAD, accepted ADRs, and TDS in [`documentation/`](documentation/) remain the source of truth. See [Development Workflow](#development-workflow) for the delivery order and current branch status.
 
 ---
 
@@ -79,6 +79,7 @@ See [`Solution_Architecture_Document(SAD)_v_2_Part_6B_Governance_and_Reference.m
 ## Implemented Capabilities
 
 - Single transaction ingestion (`POST /api/v1/transactions`): validation, duplicate detection (application pre-check + database unique-constraint fallback), merchant resolution, rule-based categorisation, persistence, and an audit event — all within one transactional use case.
+- Bulk transaction ingestion (`POST /api/v1/transactions/bulk`, up to 500 items): each item processed independently through the same single-create use case, in its own transaction, so one invalid item never rolls back another already-committed item — see [Bulk Transaction Creation](#bulk-transaction-creation) for the full partial-success/duplicate/error semantics.
 - Transaction retrieval by id (`GET /api/v1/transactions/{id}`) and filtered, paginated, sorted transaction search (`GET /api/v1/transactions`) — customer/source/category/merchant/direction/status/date-range filters, sorting restricted to the one documented sortable field (`transactionTimestamp`), enrichment done via batch (not per-row) cross-module lookups to avoid N+1.
 - Configurable, priority-ordered categorisation rules (merchant and description matching) with a seeded fallback category.
 - Merchant name normalisation and find-or-create resolution.
@@ -90,7 +91,6 @@ See [`Solution_Architecture_Document(SAD)_v_2_Part_6B_Governance_and_Reference.m
 
 **Not yet implemented** (documented in the SAD/TDS but out of scope so far — see [`CLAUDE.md`](CLAUDE.md) for the exact exclusion rationale):
 
-- Bulk transaction ingestion.
 - Any customer/merchant/categorisation-admin/audit CRUD or read endpoint (no documented HTTP contract, or no backing use case, for any of these today) — the authorities for them (`CUSTOMER_READ`, `CATEGORY_ADMIN`, `AUDIT_READ`, `OPERATIONS_READ`) are defined in the approved mapping but have nothing to attach to yet.
 - OpenAPI/Swagger generation.
 - Actuator liveness/readiness probes (only the default `/actuator/health` is exposed today) and restricting `/actuator/metrics`/`/env`/`/loggers`.
@@ -206,7 +206,7 @@ Applied migrations are immutable; schema changes are always additive new migrati
 ./mvnw verify      # full build-verification lifecycle
 ```
 
-The test stack uses JUnit 5, Mockito, Spring Boot Test (including `@WebMvcTest` slices for controllers, mocking the use-case layer — no database needed there), Spring Security Test (`jwt()` `MockMvc` request post-processor — no real signed token or identity provider needed in any test), Spring Modulith's test starter (module boundary verification), and Testcontainers for real PostgreSQL integration tests — no mocked database in repository-layer tests. One `@SpringBootTest` smoke test (`CreateTransactionEndToEndTests`) exercises the full real stack (real Postgres, real correlation-ID filter, real JWT-secured filter chain, real controller, real persistence) for the create-transaction happy path, including asserting the JWT subject reaches the persisted audit row — to catch wiring mistakes a mocked-use-case slice test cannot. Every `@SpringBootTest`/`@WebMvcTest` that loads `security.SecurityConfig` mocks the `JwtDecoder` bean (`@MockitoBean`) purely to avoid a startup-time network call or a real issuer dependency — actual authentication in tests is driven by `jwt()`, not the decoder. Testcontainers-based tests provision their own PostgreSQL container via `TestcontainersConfiguration` and do not depend on, or interact with, the `compose.yaml` database described under [Docker](#docker) — the two are independent container lifecycles, and Docker must be running for either. The testing pyramid, required test types per layer, and the required test list are defined in [Part 6A – Operations, 45](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6A_Operations.md) and [TDS 70](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#70-recommended-first-implementation-slice).
+The test stack uses JUnit 5, Mockito, Spring Boot Test (including `@WebMvcTest` slices for controllers, mocking the use-case layer — no database needed there), Spring Security Test (`jwt()` `MockMvc` request post-processor — no real signed token or identity provider needed in any test), Spring Modulith's test starter (module boundary verification), and Testcontainers for real PostgreSQL integration tests — no mocked database in repository-layer tests. One `@SpringBootTest` test class (`CreateTransactionEndToEndTests`) exercises the full real stack (real Postgres, real correlation-ID filter, real JWT-secured filter chain, real controller, real persistence) for the create-transaction happy path, including asserting the JWT subject reaches the persisted audit row, plus a bulk-create scenario asserting a mixed-outcome `207` response and that both the created and duplicate-rejected items produce their expected audit rows — to catch wiring mistakes a mocked-use-case slice test cannot. Every `@SpringBootTest`/`@WebMvcTest` that loads `security.SecurityConfig` mocks the `JwtDecoder` bean (`@MockitoBean`) purely to avoid a startup-time network call or a real issuer dependency — actual authentication in tests is driven by `jwt()`, not the decoder. Testcontainers-based tests provision their own PostgreSQL container via `TestcontainersConfiguration` and do not depend on, or interact with, the `compose.yaml` database described under [Docker](#docker) — the two are independent container lifecycles, and Docker must be running for either. The testing pyramid, required test types per layer, and the required test list are defined in [Part 6A – Operations, 45](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6A_Operations.md) and [TDS 70](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#70-recommended-first-implementation-slice).
 
 ## API Documentation
 
@@ -215,6 +215,7 @@ The API is versioned under `/api/v1`. Every endpoint below requires a valid JWT 
 | Endpoint | Method | Required authority | Description |
 |---|---|---|---|
 | `/api/v1/transactions` | `POST` | `TRANSACTION_WRITE` | Create a single transaction. `201` + the created resource (`Location` header), `409` on duplicate, `404` on unknown source/customer, `400` on validation failure, `401`/`403` on auth failure. |
+| `/api/v1/transactions/bulk` | `POST` | `TRANSACTION_WRITE` | Create up to 500 transactions, each processed independently. `207` with a per-item outcome envelope for any request that reaches processing (all-success, all-failure, or mixed), `400` if the batch is empty/oversized/malformed, `401`/`403` on auth failure. See [Bulk Transaction Creation](#bulk-transaction-creation). |
 | `/api/v1/transactions/{id}` | `GET` | `TRANSACTION_READ` | Retrieve a single transaction by id, fully enriched with merchant/category data. `200`, `404` if unknown, `401`/`403` on auth failure. |
 | `/api/v1/transactions` | `GET` | `TRANSACTION_READ` | Filtered, paginated, sorted transaction search — `customerId`/`sourceCode`/`categoryCode`/`merchantId`/`direction`/`status`/`occurredFrom`/`occurredTo`/`page`/`size`/`sort` query params; `sort` accepts only `transactionTimestamp` (asc/desc). `200` with a paginated envelope, `400` on any validation failure, `401`/`403` on auth failure. |
 | `/api/v1/customers/{customerId}/summary` | `GET` | `AGGREGATION_READ` | Customer income/expenditure/net-cash-flow summary over `?from=&to=` (ISO dates). |
@@ -226,6 +227,35 @@ The API is versioned under `/api/v1`. Every endpoint below requires a valid JWT 
 The create-transaction response follows SAD 35.1's shape (including nested `merchant`/`category` objects), which is the authoritative source over TDS 28's narrower documented shape — see [`CLAUDE.md`](CLAUDE.md#documentation-precedence) for how documentation conflicts are resolved. The full, authoritative API contracts (request/response payloads, status codes, filtering, pagination, sorting for the not-yet-implemented endpoints) are documented in [Part 5 – API & Security, 34–35](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) and [TDS Part 6](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#part-6--api-contract).
 
 All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable `errorCode`, `correlationId`, and `timestamp`. Error codes match [SAD 39.4](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_5_API_and_Security.md) exactly (`TRANSACTION_DUPLICATE`, `SOURCE_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `CATEGORY_NOT_FOUND`, `TRANSACTION_NOT_FOUND`, `REQUEST_VALIDATION_FAILED`, `INVALID_DATE_RANGE`, `AUTHENTICATION_REQUIRED`, `TOKEN_INVALID`, `ACCESS_DENIED`, `INTERNAL_SERVER_ERROR`) — a real SAD/TDS naming conflict was found and resolved here in `feature/security` (TDS 40 uses a different `TRX-NNN`/`SEC-NNN` scheme; SAD outranks TDS per [documentation precedence](CLAUDE.md#documentation-precedence)). One documented gap remains: `TransactionValidationException` still maps to a generic `REQUEST_VALIDATION_FAILED` code rather than TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes, since the exception doesn't yet carry which invariant failed — giving it a structured reason is deferred work.
+
+## Bulk Transaction Creation
+
+`POST /api/v1/transactions/bulk` (FR-02, UC-02, SAD 32.5/35.2/39.8, TDS 29) accepts a wrapper request body, `{ "transactions": [ <the same per-item shape as POST /api/v1/transactions>, ... ] }`, of 1–500 items.
+
+**Partial success, not all-or-nothing.** Each item is processed independently, in its own database transaction, by calling the same `CreateTransactionUseCase` the single-create endpoint uses — reused, not duplicated. There is no transaction around the batch as a whole: when one item fails, its own transaction rolls back cleanly and every previously-processed item stays committed exactly as it was, because each ran as its own already-completed, independent transaction. Processing is strictly sequential (no parallel/async processing) — this is also what lets a duplicate `externalTransactionId` appearing twice in the *same* batch be caught by the ordinary duplicate-detection path (the first occurrence commits before the second is attempted), with no separate same-batch pre-scan needed.
+
+**Response — always `207 Multi-Status`** for any request that reaches per-item processing, whether every item succeeded, every item failed, or the outcome was mixed (SAD 39.3 documents exactly one bulk-specific status):
+```json
+{
+  "total": 3,
+  "successful": 2,
+  "failed": 1,
+  "results": [
+    { "index": 0, "status": "CREATED", "transactionId": "9f9008dc-..." },
+    { "index": 1, "status": "CONFLICT", "errorCode": "TRANSACTION_DUPLICATE", "detail": "..." },
+    { "index": 2, "status": "CREATED", "transactionId": "da74fc23-..." }
+  ]
+}
+```
+Results preserve submission order. `status` is one of `CREATED`, `CONFLICT`, `FAILED` — the only vocabulary SAD 35.2's own example and SAD 39.8 support (39.8 defines no `status` field or enumeration at all); every failure other than a duplicate is reported as `FAILED`, with `errorCode` (the same SAD 39.4 catalogue used everywhere else in this API — `TRANSACTION_DUPLICATE`, `CUSTOMER_NOT_FOUND`, `SOURCE_NOT_FOUND`, `REQUEST_VALIDATION_FAILED`) carrying the specific reason. No new bulk-only error codes exist.
+
+**A whole-request `400`** (not a 207) is returned only for a genuinely malformed envelope — an empty `transactions` list, more than 500 items, or a `null` element — before any item is processed at all.
+
+**Only expected, per-item business/validation failures become a 207 result.** `TransactionValidationException` (covering both a missing required field on the raw item and every existing single-create business-invariant check — amount positivity, currency format, direction validity, and so on), `CustomerNotFoundException`, `TransactionSourceNotFoundException`, and `DuplicateTransactionException` are caught explicitly, one per item. An unexpected/systemic failure (e.g. the database becoming unavailable partway through the batch) is **not** caught — it propagates and aborts the whole request with the normal whole-request `500`/`503` Problem Details response, not a disguised per-item `FAILED` result; already-processed items remain committed, and the client must reconcile via `GET /api/v1/transactions`.
+
+**Audit** — unchanged and automatic: because bulk reuses the single-create use case per item, every item (success or failure) gets exactly the same audit event a standalone single-create call would produce, via the same `REQUIRES_NEW` audit transaction. No bulk-level audit event exists; none is documented.
+
+**No schema change.** Bulk writes through the same `transactions` table/write path as single-create; no Flyway migration was needed.
 
 ## Security
 
@@ -282,7 +312,7 @@ Documentation must be kept in sync with the code — see [`CLAUDE.md`](CLAUDE.md
 
 ## Future Roadmap
 
-**Near-term:** bulk transaction ingestion, OpenAPI/Swagger generation, actuator liveness/readiness probes and restricting non-health actuator endpoints, a structured reason on `TransactionValidationException` (to reach TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes instead of the current generic `REQUEST_VALIDATION_FAILED`).
+**Near-term:** OpenAPI/Swagger generation, actuator liveness/readiness probes and restricting non-health actuator endpoints, a structured reason on `TransactionValidationException` (to reach TDS 40's specific `TRX-002`/`TRX-004`/`TRX-005` codes instead of the current generic `REQUEST_VALIDATION_FAILED`), a focused Testcontainers concurrent-duplicate-write test against `JpaTransactionRepositoryAdapter` (considered during `feature/transaction-bulk` and deliberately deferred, since bulk itself introduces no new concurrency).
 
 **Functional:** multi-currency support, user-defined categorisation rules, scheduled recurring reports, additional provider integrations, notifications/subscriptions.
 
@@ -315,9 +345,9 @@ feature/categorisation → feature/audit → feature/transaction → feature/agg
 feature/api → feature/security
 ```
 
-Every branch in the original sequence is now complete, plus one post-MVP branch: `feature/transaction-query`, adding transaction retrieval/search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions` — FR-08, UC-03, UC-04, TDS 30-31) on top of the already-secured API.
+Every branch in the original sequence is now complete, plus two post-MVP branches: `feature/transaction-query`, adding transaction retrieval/search (`GET /api/v1/transactions/{id}`, `GET /api/v1/transactions` — FR-08, UC-03, UC-04, TDS 30-31), and `feature/transaction-bulk`, adding bulk transaction creation with partial success (`POST /api/v1/transactions/bulk` — FR-02, UC-02, SAD 32.5/35.2/39.8, TDS 29) on top of the already-secured API.
 
-`feature/project-structure` established only the package skeleton, Spring Modulith module boundaries, architecture verification tests, and shared configuration structure — no business logic. `categorisation` and `audit` were built before `transaction` because the transaction ingestion workflow depends on both (assigning a category and recording an audit event are part of processing a transaction, not features bolted on afterwards). `aggregation` came after `transaction` because it only reads transaction data that must already exist. `api` wired already-completed use cases to HTTP without introducing new business behaviour, behind a temporary permit-all posture. `feature/security` replaced that posture with the real, documented JWT/RBAC model last, since it needed real HTTP endpoints to secure. `feature/transaction-query` came after all ten, as the first post-MVP gap-analysis-driven branch, adding two new `TRANSACTION_READ`-protected read endpoints and the batch (not per-row) cross-module enrichment lookups they need. See [`CLAUDE.md`](CLAUDE.md#implementation-rules) for the full rationale. Before implementing a feature:
+`feature/project-structure` established only the package skeleton, Spring Modulith module boundaries, architecture verification tests, and shared configuration structure — no business logic. `categorisation` and `audit` were built before `transaction` because the transaction ingestion workflow depends on both (assigning a category and recording an audit event are part of processing a transaction, not features bolted on afterwards). `aggregation` came after `transaction` because it only reads transaction data that must already exist. `api` wired already-completed use cases to HTTP without introducing new business behaviour, behind a temporary permit-all posture. `feature/security` replaced that posture with the real, documented JWT/RBAC model last, since it needed real HTTP endpoints to secure. `feature/transaction-query` came after all ten, as the first post-MVP gap-analysis-driven branch, adding two new `TRANSACTION_READ`-protected read endpoints and the batch (not per-row) cross-module enrichment lookups they need. `feature/transaction-bulk` followed, adding the documented bulk-create capability by calling the existing single-create use case once per item — see [Bulk Transaction Creation](#bulk-transaction-creation) for its partial-success/duplicate/error semantics. See [`CLAUDE.md`](CLAUDE.md#implementation-rules) for the full rationale. Before implementing a feature:
 
 1. Read the relevant sections of `documentation/` for that module.
 2. Confirm the module's package structure, ports, and dependency rules.

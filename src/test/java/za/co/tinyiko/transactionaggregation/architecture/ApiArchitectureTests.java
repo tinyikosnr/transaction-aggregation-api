@@ -4,7 +4,10 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import za.co.tinyiko.transactionaggregation.api.dto.request.BulkCreateTransactionsRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateTransactionRequest;
+import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionItemResponse;
+import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.CategorySummaryResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.CustomerSummaryResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.MerchantSummaryResponse;
@@ -28,7 +31,8 @@ import za.co.tinyiko.transactionaggregation.api.mapper.TransactionApiMapper;
 class ApiArchitectureTests {
 
 	private static final List<Class<?>> REQUEST_DTO_TYPES = List.of(
-			CreateTransactionRequest.class
+			CreateTransactionRequest.class,
+			BulkCreateTransactionsRequest.class
 	);
 
 	private static final List<Class<?>> RESPONSE_DTO_TYPES = List.of(
@@ -43,7 +47,9 @@ class ApiArchitectureTests {
 			MonthlySummaryResponse.class,
 			TransactionSearchItemResponse.class,
 			TransactionSearchResponse.class,
-			TransactionSearchResponse.PageInfo.class
+			TransactionSearchResponse.PageInfo.class,
+			BulkTransactionResponse.class,
+			BulkTransactionItemResponse.class
 	);
 
 	private static final List<Class<?>> MAPPER_TYPES = List.of(
