@@ -8,6 +8,8 @@ import za.co.tinyiko.transactionaggregation.api.dto.request.BulkCreateTransactio
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateCategorisationRuleRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.CreateTransactionRequest;
 import za.co.tinyiko.transactionaggregation.api.dto.request.UpdateCategorisationRuleRequest;
+import za.co.tinyiko.transactionaggregation.api.dto.response.AuditEventResponse;
+import za.co.tinyiko.transactionaggregation.api.dto.response.AuditEventSearchResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionItemResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.BulkTransactionResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.CategorisationRuleResponse;
@@ -20,6 +22,7 @@ import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionResponse
 import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionSearchItemResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionSearchResponse;
 import za.co.tinyiko.transactionaggregation.api.mapper.AggregationApiMapper;
+import za.co.tinyiko.transactionaggregation.api.mapper.AuditEventApiMapper;
 import za.co.tinyiko.transactionaggregation.api.mapper.CategoryAdminApiMapper;
 import za.co.tinyiko.transactionaggregation.api.mapper.TransactionApiMapper;
 
@@ -58,13 +61,17 @@ class ApiArchitectureTests {
 			BulkTransactionResponse.class,
 			BulkTransactionItemResponse.class,
 			CategoryResponse.class,
-			CategorisationRuleResponse.class
+			CategorisationRuleResponse.class,
+			AuditEventResponse.class,
+			AuditEventSearchResponse.class,
+			AuditEventSearchResponse.PageInfo.class
 	);
 
 	private static final List<Class<?>> MAPPER_TYPES = List.of(
 			TransactionApiMapper.class,
 			AggregationApiMapper.class,
-			CategoryAdminApiMapper.class
+			CategoryAdminApiMapper.class,
+			AuditEventApiMapper.class
 	);
 
 	/**
@@ -94,7 +101,9 @@ class ApiArchitectureTests {
 				"za.co.tinyiko.transactionaggregation.transaction.persistence",
 				"za.co.tinyiko.transactionaggregation.aggregation.domain",
 				"za.co.tinyiko.transactionaggregation.categorisation.domain",
-				"za.co.tinyiko.transactionaggregation.categorisation.persistence"));
+				"za.co.tinyiko.transactionaggregation.categorisation.persistence",
+				"za.co.tinyiko.transactionaggregation.audit.domain",
+				"za.co.tinyiko.transactionaggregation.audit.persistence"));
 	}
 
 	/**
@@ -113,7 +122,9 @@ class ApiArchitectureTests {
 				"za.co.tinyiko.transactionaggregation.aggregation.domain",
 				"za.co.tinyiko.transactionaggregation.aggregation.persistence",
 				"za.co.tinyiko.transactionaggregation.categorisation.domain",
-				"za.co.tinyiko.transactionaggregation.categorisation.persistence"));
+				"za.co.tinyiko.transactionaggregation.categorisation.persistence",
+				"za.co.tinyiko.transactionaggregation.audit.domain",
+				"za.co.tinyiko.transactionaggregation.audit.persistence"));
 	}
 
 }

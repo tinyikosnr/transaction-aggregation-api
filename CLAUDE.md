@@ -76,8 +76,8 @@ Base package: `za.co.tinyiko.transactionaggregation`. The 10 top-level module pa
 za.co.tinyiko.transactionaggregation
 ├── api                     # shared presentation layer: controllers, request/response DTOs, exception advice
 │   ├── controller           TransactionController (create/createBulk/get/search), AggregationController,
-│   │                          CategoryAdminController (categories: list/get; rules: list/get/create/update -
-│   │                          package-private, thin)
+│   │                          CategoryAdminController (categories: list/get; rules: list/get/create/update),
+│   │                          AuditEventController (search only - package-private, thin)
 │   ├── dto
 │   │   ├── request           CreateTransactionRequest, BulkCreateTransactionsRequest (transactions list
 │   │   │                      deliberately not @Valid-cascaded - see feature/transaction-bulk note below),
@@ -87,17 +87,23 @@ za.co.tinyiko.transactionaggregation
 │   │                          TransactionSearchItemResponse, BulkTransactionResponse, BulkTransactionItemResponse,
 │   │                          CustomerSummaryResponse, CategorySummaryResponse,
 │   │                          MerchantSummaryResponse, MonthlySummaryResponse,
-│   │                          CategoryResponse (read-only, no version), CategorisationRuleResponse (carries version)
+│   │                          CategoryResponse (read-only, no version), CategorisationRuleResponse (carries version),
+│   │                          AuditEventResponse (eventData typed JsonNode, not String - see feature/audit-query
+│   │                          below), AuditEventSearchResponse (+ nested PageInfo)
 │   ├── mapper                TransactionApiMapper (toResponse overloaded for TransactionCreatedResult and
 │   │                          TransactionDetails, plus toSearchResponse, toBulkCommand, toBulkResponse),
 │   │                          AggregationApiMapper (pure structural mapping, static),
-│   │                          CategoryAdminApiMapper (pure structural mapping, static)
+│   │                          CategoryAdminApiMapper (pure structural mapping, static),
+│   │                          AuditEventApiMapper (pure structural mapping, static, but its toResponse/
+│   │                          toSearchResponse take an ObjectMapper parameter - the one place in this layer
+│   │                          a mapper needs a framework collaborator - see feature/audit-query below)
 │   └── advice                GlobalExceptionHandler (RFC 9457 ProblemDetail; error codes match SAD 39.4
 │                               exactly, not TDS 40's TRX-NNN/SEC-NNN scheme - see Documentation Precedence;
 │                               TRANSACTION_NOT_FOUND added in feature/transaction-query; no changes needed
 │                               for feature/transaction-bulk; RULE_NOT_FOUND (new code) and
 │                               OPTIMISTIC_LOCK_CONFLICT (existing SAD 39.4 code, first real use) added in
-│                               feature/category-admin - see below)
+│                               feature/category-admin; AuditSearchValidationException handler added in
+│                               feature/audit-query, reusing REQUEST_VALIDATION_FAILED, no new code - see below)
 ├── transaction              # owns transactions, transaction_sources
 │   ├── domain               Transaction, TransactionId, TransactionSource, TransactionSourceId, Money,
 │   │                          TransactionDirection (local to this module, see below), TransactionStatus, SourceStatus
@@ -214,11 +220,26 @@ za.co.tinyiko.transactionaggregation
 ├── audit                     # owns audit_events (append-only)
 │   ├── domain               AuditEvent (immutable, append-only, no @Version), AuditEventId
 │   ├── application          RecordAuditEventUseCase (returns void, not AuditEvent; see below), RecordAuditEventCommand,
-│   │                          AuditService (always runs in its own REQUIRES_NEW transaction; see below)
+│   │                          AuditService (always runs in its own REQUIRES_NEW transaction; see below),
+│   │                          SearchAuditEventsUseCase, AuditEventSearchCriteria, AuditEventSearchResult
+│   │                          (own dedicated paging result, not transaction.application.PagedResult<T>
+│   │                          promoted to shared - see below), AuditEventView, AuditSearchValidationException,
+│   │                          SearchAuditEventsService
+│   │                          (query additions, feature/audit-query: SAD 31.2's "operational and compliance
+│   │                          queries" is the only documented basis - exact filters/pagination/sorting are
+│   │                          explicit project decisions, see Implementation Rules below)
 │   │                          (public API exposed via a package-level @NamedInterface, same pattern as categorisation)
-│   ├── port                 AuditRepositoryPort (save only; nothing reads an audit event back yet)
+│   ├── port                 AuditRepositoryPort (save only - write side, untouched), AuditQueryRepositoryPort
+│   │                          (search only - a separate port, feature/audit-query, same write/read port split
+│   │                          transaction already establishes), AuditEventRow, AuditEventSearchQuery,
+│   │                          AuditEventSearchPage (port's own shapes, never the domain AuditEvent)
 │   ├── persistence           AuditEventEntity (eventData mapped to JSONB via @JdbcTypeCode(SqlTypes.JSON)),
-│   │                          SpringDataAuditRepository, JpaAuditRepositoryAdapter
+│   │                          SpringDataAuditRepository (write, JpaRepository-based, unchanged),
+│   │                          JpaAuditRepositoryAdapter (write, unchanged), AuditEventSpecifications,
+│   │                          SpringDataAuditSearchRepository (read-only - Repository<AuditEventEntity, UUID> +
+│   │                          JpaSpecificationExecutor, deliberately not JpaRepository, so no save/delete is
+│   │                          ever exposed on the search side - feature/audit-query, see below),
+│   │                          JpaAuditQueryRepositoryAdapter
 │   └── mapper                AuditMapper (toDomain + toEntity, not applyTo; see below)
 ├── security                  # JWT validation, role/authority extraction, access-denied handling
 │   ├── SecurityConfig         The only public type: SecurityFilterChain, @EnableMethodSecurity, the
@@ -481,3 +502,21 @@ The first draft of `JpaCategorisationRuleRepositoryAdapter#update` split this in
 **No blanket `DataIntegrityViolationException` translation exists for rules.** Unlike `merchant`/`transaction`'s adapters, `create` has no try/catch at all: rules have no uniqueness constraint (duplicates are explicitly permitted, confirmed against V4's DDL), and the category-reference FK can never actually fail there since `CategorisationRuleAdminService` validates the category exists first and categories are never deletable in this branch's scope - so there is no other persistence failure on `create` with a defined application meaning to translate. `update`'s only catch is the narrow, precisely-scoped `ObjectOptimisticLockingFailureException` described above. An unexpected/systemic failure is left to propagate as a genuine `500`, not disguised as a business conflict - the same principle `feature/transaction-bulk` already established for its own per-item exception handling.
 
 Regex patterns (`MatchOperator.REGEX`) are validated eagerly at create/update time (`Pattern.compile`, wrapped as `RuleValidationException` on failure) specifically because `CategorisationRule.matches` only compiles a pattern lazily, the first time a real transaction is categorised - without eager validation, a broken pattern would not surface until it broke runtime categorisation for an actual customer transaction. `CategorisationRuleEngine`/`CategorisationService` are otherwise entirely untouched; `findAllActive()`'s existing active-only filtering is what makes a newly-created, updated, or deactivated rule visible (or invisible) to the very next categorisation call with no other code change, proved by `CategoryAdminEndToEndTests`. No audit events are produced by any admin endpoint (not documented anywhere - checked SAD 27.7's audit event catalogue specifically); no caching exists to invalidate (none exists today, none was added); no Flyway migration was needed (every column this branch writes through - `active`, `version` - already existed).
+
+**`feature/audit-query` (post-MVP, after `feature/category-admin`) implements audit-event search - `GET /api/v1/audit-events`, `AUDIT_READ`-protected. No get-by-id, no write/update/delete of any kind.** This branch's scope is, like `feature/category-admin`'s before it, an **explicit project resolution of a genuinely incomplete SAD/TDS contract** - in fact a sparser one: SAD 31.2's Ownership Matrix ("Audit | audit_events | Audit module | Operational and compliance queries" - the only Read Access column entry naming a *purpose* rather than a consuming module) and SAD 36.4's one-line `AUDIT_READ` authority description are the entire documented basis. TDS names no audit controller, no audit request/response DTO, and no filter list at all - not even the thin, asymmetric hint `feature/category-admin` had. Every filter, pagination number, sort default, and the `eventData` representation below are therefore explicit project decisions, not inferred from a named contract:
+
+- **Filters:** `aggregateType`, `aggregateId`, `eventType`, `actor`, `correlationId`, `occurredFrom`/`occurredTo` - each backed directly by a real persisted `audit_events` column; no `customerId`/`transactionId` aliases (not real columns; a transaction's full audit trail is already reachable via `aggregateType=TRANSACTION&aggregateId=...`), no `eventData`-content search (opaque JSON text, no schema to query against). All string filters are exact, case-sensitive match - no fuzzy search exists anywhere else in this codebase's search endpoints either.
+- **`aggregateId` requires `aggregateType`.** The audited aggregate identity is the pair, not `aggregateId` alone - enforced in `SearchAuditEventsService` before the query is built, `400 REQUEST_VALIDATION_FAILED` if violated. This also matches the existing composite index, `idx_audit_events_aggregate (aggregate_type, aggregate_id)`.
+- **Blank-string filters normalise to absent**, explicitly, in `SearchAuditEventsService` (`null`/`""`/whitespace-only all become `null` before the query is built) - not left to "an empty `@RequestParam` is indistinguishable from omission" as an assumption; a client-supplied empty string must not be silently treated as a real, always-matching filter value.
+- **Pagination:** `page` default `0`, `size` default `20`, max `100`. **Sorting:** `occurredAt` is the only sortable field, `asc`/`desc`, default `occurredAt,desc`. Chosen for consistency with `transaction`'s own already-battle-tested numbers, **not inherited automatically** - flagged as its own independent decision, since mandatory capped pagination is the real safety valve against unbounded queries against a write-heavy table.
+- **No maximum audit date range**, deliberately different from transaction search's 24-month cap: audit is explicitly a compliance query surface (SAD 31.2) where long historical lookback is a legitimate need, and nothing documents a cap. `occurredFrom`/`occurredTo` stay `Instant`-typed (matching the real column), both bounds inclusive, both independently optional, mirroring `TransactionSpecifications.occurredBetween` as a *pattern*, not a cross-module reference.
+- **No get-by-id.** SAD 31.2's own wording is "queries" (plural, search-shaped); search by `correlationId`/`aggregateId` already serves the realistic compliance workflow without inventing a singular resource lookup nothing names.
+- **`AuditSearchValidationException` reuses the existing `REQUEST_VALIDATION_FAILED` code** for every validation failure (bad page/size/sort, `occurredFrom` after `occurredTo`, `aggregateId` without `aggregateType`) - no new public error code was introduced anywhere in this branch.
+
+**`eventData` representation - the part of this branch that needed the most care.** `event_data` is real JSONB; the domain/application/port layers all keep it a raw JSON `String` (`AuditEvent.eventData`, unchanged since `feature/audit`; `AuditEventRow`/`AuditEventView` likewise) - `audit.domain`/`audit.application`/`audit.port` never gain a JSON-library type. The conversion to structured JSON happens exactly once, in `api.mapper.AuditEventApiMapper`, using the Boot-autoconfigured `ObjectMapper`: `objectMapper.readTree(view.eventData())`, producing a `tools.jackson.databind.JsonNode` that `AuditEventResponse.eventData` is typed as - so the serialized HTTP response embeds a genuine nested JSON object (`"eventData":{"foo":"bar"}`), not a re-escaped string (`"eventData":"{\"foo\":\"bar\"}"`), proved directly by `AuditEventApiMapperTests`. **Deliberately not `@JsonRawValue`**: keeping the parse step explicit and visible in the mapper, rather than relying on serialization-time annotation magic, was a specific correction made during review. `AuditEventApiMapper` stays a static utility class like every other `api.mapper` (not a Spring bean) - `AuditEventController` holds the constructor-injected `ObjectMapper` it already needs and passes it into the mapper call, so the framework dependency lives in the one place it's actually used without turning the mapper into something Spring has to instantiate. `readTree` is called with **no try/catch**: since `event_data` is real, already-validated-at-write-time JSONB, a parse failure here means the persisted data itself isn't valid JSON - a data-integrity/system condition, not a client input error - and must propagate as a genuine `500 INTERNAL_SERVER_ERROR` via the existing generic `Exception` handler, never silently downgraded to a String fallback.
+
+**Read-side repository is structurally append-only-safe, not just conventionally so.** `SpringDataAuditSearchRepository extends Repository<AuditEventEntity, UUID>, JpaSpecificationExecutor<AuditEventEntity>` - deliberately not `JpaRepository`: `JpaSpecificationExecutor` declares `findAll(Specification, Pageable)` itself, so this combination is sufficient for Specification-based paginated search while exposing no `save`/`delete`/`findById`/unpaged-`findAll`. `AuditQueryRepositoryPort` has exactly one method (`search`), verified directly by `AuditArchitectureTests#queryRepositoryPortExposesNoMutatingMethods`. The existing write-side `SpringDataAuditRepository`/`JpaAuditRepositoryAdapter`/`AuditRepositoryPort` (still `save`-only, verified by `AuditArchitectureTests#writeRepositoryPortExposesOnlySave`) and `AuditService`'s `REQUIRES_NEW` transaction boundary are completely untouched.
+
+**No pagination type promoted to `shared`.** `audit.application.AuditEventSearchResult` is a small, dedicated, non-generic record owned entirely by `audit`, not `transaction.application.PagedResult<T>` moved to `shared`. Considered and rejected: promoting an already-shipped, already-tested, cross-module-exposed type purely to save a handful of duplicated fields would be real, unforced churn to a working `transaction` contract for a marginal DRY gain - the same "smallest architecture, least coupling/churn" reasoning already applied when `category-admin` needed its own paging result instead of reusing anything from `transaction`.
+
+**No cross-module enrichment** - `audit`'s own `@ApplicationModule(allowedDependencies = "shared")` is completely unchanged by this branch (it gains no new *outbound* dependency), which structurally guarantees `audit.application` can never reach `transaction`/`customer`/`categorisation` even if a future change tried to add enrichment; `ModularityTests` would fail immediately. What *did* need to change was `api`'s own `@ApplicationModule.allowedDependencies` - `"audit :: application"` was added, since `AuditEventController` is the first controller to call into `audit.application` directly for a query (every earlier reference, e.g. in `GlobalExceptionHandler`, only ever caught an exception another module threw internally). No V12 migration: all three query predicates (`aggregateType`/`aggregateId`, `correlationId`, `occurredAt` range and sort) are already covered by V7's three existing indexes; `actor`/`eventType` alone remain unindexed, deliberately - considered and deferred pending real usage evidence, not added speculatively against a write-heavy, append-only table.
