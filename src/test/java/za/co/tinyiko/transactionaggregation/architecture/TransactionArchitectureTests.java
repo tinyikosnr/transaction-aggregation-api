@@ -10,10 +10,17 @@ import za.co.tinyiko.transactionaggregation.transaction.application.CreateTransa
 import za.co.tinyiko.transactionaggregation.transaction.application.CustomerNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.CustomerTransactionTotals;
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
+import za.co.tinyiko.transactionaggregation.transaction.application.GetTransactionUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.MerchantTransactionTotal;
 import za.co.tinyiko.transactionaggregation.transaction.application.MonthlyTransactionTotal;
+import za.co.tinyiko.transactionaggregation.transaction.application.PagedResult;
+import za.co.tinyiko.transactionaggregation.transaction.application.SearchTransactionsUseCase;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionCreatedResult;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionDetails;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionQueryPort;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSearchCriteria;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSearchResultItem;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSourceNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionValidationException;
 import za.co.tinyiko.transactionaggregation.transaction.domain.Money;
@@ -28,7 +35,12 @@ import za.co.tinyiko.transactionaggregation.transaction.port.CategoryTotalsRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.CustomerTotalsRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.MerchantTotalsRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.MonthlyTotalsRow;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionDetailRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionRepositoryPort;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSearchPage;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSearchQuery;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSearchRepositoryPort;
+import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSearchRow;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSourceRepositoryPort;
 import za.co.tinyiko.transactionaggregation.transaction.port.TransactionSummaryRepositoryPort;
 
@@ -63,7 +75,14 @@ class TransactionArchitectureTests {
 			CustomerTransactionTotals.class,
 			CategoryTransactionTotal.class,
 			MerchantTransactionTotal.class,
-			MonthlyTransactionTotal.class
+			MonthlyTransactionTotal.class,
+			GetTransactionUseCase.class,
+			TransactionDetails.class,
+			TransactionNotFoundException.class,
+			SearchTransactionsUseCase.class,
+			TransactionSearchCriteria.class,
+			TransactionSearchResultItem.class,
+			PagedResult.class
 	);
 
 	/**
@@ -84,7 +103,12 @@ class TransactionArchitectureTests {
 			CustomerTotalsRow.class,
 			CategoryTotalsRow.class,
 			MerchantTotalsRow.class,
-			MonthlyTotalsRow.class
+			MonthlyTotalsRow.class,
+			TransactionSearchRepositoryPort.class,
+			TransactionDetailRow.class,
+			TransactionSearchRow.class,
+			TransactionSearchQuery.class,
+			TransactionSearchPage.class
 	);
 
 	@Test

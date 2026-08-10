@@ -3,6 +3,7 @@ package za.co.tinyiko.transactionaggregation.merchant.persistence;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,23 @@ class JpaMerchantRepositoryAdapterTests {
 		assertThatThrownBy(() -> adapter.save(duplicate))
 				.isInstanceOf(DuplicateMerchantException.class)
 				.hasMessageContaining("SPAR");
+	}
+
+	@Test
+	void findByIdsReturnsOnlyTheMatchingMerchantsInOneBatch() {
+		Merchant checkers = adapter.save(Merchant.register(MerchantId.generate(), "CHECKERS", "Checkers", FIXED_CLOCK));
+		Merchant shell = adapter.save(Merchant.register(MerchantId.generate(), "SHELL", "Shell", FIXED_CLOCK));
+		adapter.save(Merchant.register(MerchantId.generate(), "WOOLWORTHS", "Woolworths", FIXED_CLOCK));
+
+		List<Merchant> found = adapter.findByIds(List.of(checkers.id(), shell.id()));
+
+		assertThat(found).containsExactlyInAnyOrder(checkers, shell);
+	}
+
+	@Test
+	void findByIdsReturnsEmptyForAnEmptyOrUnknownIdCollection() {
+		assertThat(adapter.findByIds(List.of())).isEmpty();
+		assertThat(adapter.findByIds(List.of(MerchantId.generate()))).isEmpty();
 	}
 
 }

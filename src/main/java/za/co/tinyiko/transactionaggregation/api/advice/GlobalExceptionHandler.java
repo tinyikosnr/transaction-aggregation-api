@@ -18,6 +18,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryNotFoundException;
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
 import za.co.tinyiko.transactionaggregation.transaction.application.DuplicateTransactionException;
+import za.co.tinyiko.transactionaggregation.transaction.application.TransactionNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionSourceNotFoundException;
 import za.co.tinyiko.transactionaggregation.transaction.application.TransactionValidationException;
 
@@ -31,7 +32,9 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionV
  * genuine SAD/TDS naming conflict, resolved per documentation precedence (SAD outranks TDS) in
  * {@code feature/security}: {@code TRANSACTION_DUPLICATE}, {@code SOURCE_NOT_FOUND},
  * {@code CUSTOMER_NOT_FOUND}, {@code CATEGORY_NOT_FOUND}, {@code REQUEST_VALIDATION_FAILED},
- * {@code INVALID_DATE_RANGE}, {@code INTERNAL_SERVER_ERROR} - replacing the {@code TRX-001}-style
+ * {@code INVALID_DATE_RANGE}, {@code INTERNAL_SERVER_ERROR}, {@code TRANSACTION_NOT_FOUND}
+ * (added in {@code feature/transaction-query}, already present in SAD 39.4's catalogue but unused
+ * until now) - replacing the {@code TRX-001}-style
  * codes this class shipped with in {@code feature/api}, before the conflict was noticed. The two
  * 401 codes ({@code AUTHENTICATION_REQUIRED}, {@code TOKEN_INVALID}) and the 403 code
  * ({@code ACCESS_DENIED}) never reach this class at all - see
@@ -73,6 +76,11 @@ class GlobalExceptionHandler {
 	@ExceptionHandler(TransactionSourceNotFoundException.class)
 	ResponseEntity<ProblemDetail> handleTransactionSourceNotFound(TransactionSourceNotFoundException ex, HttpServletRequest request) {
 		return respond(HttpStatus.NOT_FOUND, "SOURCE_NOT_FOUND", ex.getMessage(), request);
+	}
+
+	@ExceptionHandler(TransactionNotFoundException.class)
+	ResponseEntity<ProblemDetail> handleTransactionNotFound(TransactionNotFoundException ex, HttpServletRequest request) {
+		return respond(HttpStatus.NOT_FOUND, "TRANSACTION_NOT_FOUND", ex.getMessage(), request);
 	}
 
 	@ExceptionHandler({

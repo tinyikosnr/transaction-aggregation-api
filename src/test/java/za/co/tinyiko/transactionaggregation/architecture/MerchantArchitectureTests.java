@@ -5,7 +5,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import za.co.tinyiko.transactionaggregation.merchant.application.DuplicateMerchantException;
+import za.co.tinyiko.transactionaggregation.merchant.application.GetMerchantsUseCase;
 import za.co.tinyiko.transactionaggregation.merchant.application.MerchantResolutionPort;
+import za.co.tinyiko.transactionaggregation.merchant.application.MerchantView;
 import za.co.tinyiko.transactionaggregation.merchant.domain.Merchant;
 import za.co.tinyiko.transactionaggregation.merchant.domain.MerchantId;
 import za.co.tinyiko.transactionaggregation.merchant.domain.MerchantNormaliser;
@@ -26,7 +28,9 @@ class MerchantArchitectureTests {
 
 	private static final List<Class<?>> APPLICATION_TYPES = List.of(
 			MerchantResolutionPort.class,
-			DuplicateMerchantException.class
+			DuplicateMerchantException.class,
+			GetMerchantsUseCase.class,
+			MerchantView.class
 	);
 
 	@Test

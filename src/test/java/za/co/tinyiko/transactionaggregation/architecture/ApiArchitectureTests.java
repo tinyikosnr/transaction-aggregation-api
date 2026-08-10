@@ -10,6 +10,8 @@ import za.co.tinyiko.transactionaggregation.api.dto.response.CustomerSummaryResp
 import za.co.tinyiko.transactionaggregation.api.dto.response.MerchantSummaryResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.MonthlySummaryResponse;
 import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionResponse;
+import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionSearchItemResponse;
+import za.co.tinyiko.transactionaggregation.api.dto.response.TransactionSearchResponse;
 import za.co.tinyiko.transactionaggregation.api.mapper.AggregationApiMapper;
 import za.co.tinyiko.transactionaggregation.api.mapper.TransactionApiMapper;
 
@@ -38,7 +40,10 @@ class ApiArchitectureTests {
 			CustomerSummaryResponse.MoneyAmount.class,
 			CategorySummaryResponse.class,
 			MerchantSummaryResponse.class,
-			MonthlySummaryResponse.class
+			MonthlySummaryResponse.class,
+			TransactionSearchItemResponse.class,
+			TransactionSearchResponse.class,
+			TransactionSearchResponse.PageInfo.class
 	);
 
 	private static final List<Class<?>> MAPPER_TYPES = List.of(

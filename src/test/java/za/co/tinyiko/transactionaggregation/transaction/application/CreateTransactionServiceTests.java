@@ -52,7 +52,7 @@ class CreateTransactionServiceTests {
 	private static final UUID CATEGORY_ID = UUID.randomUUID();
 	private static final UUID MERCHANT_ID = UUID.randomUUID();
 	private static final CorrelationId CORRELATION_ID = new CorrelationId("test-correlation-id");
-	private static final CategoryView CATEGORY_VIEW = new CategoryView("GROCERIES", "Groceries");
+	private static final CategoryView CATEGORY_VIEW = new CategoryView(CATEGORY_ID, "GROCERIES", "Groceries");
 	private static final String ACTOR = "jwt-subject-001";
 
 	@Mock

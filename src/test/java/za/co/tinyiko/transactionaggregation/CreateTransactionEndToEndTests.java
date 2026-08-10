@@ -23,6 +23,7 @@ import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -107,6 +108,29 @@ class CreateTransactionEndToEndTests {
 						.content(objectMapper.writeValueAsString(request)))
 				.andExpect(status().isUnauthorized())
 				.andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
+	}
+
+	@Test
+	void searchesCreatedTransactionsThroughTheWholeRealStack() throws Exception {
+		UUID customerId = insertCustomer();
+		CreateTransactionRequest request = new CreateTransactionRequest(customerId, "MOCK_BANK_A",
+				"EXT-E2E-" + UUID.randomUUID(), "Checkers", new BigDecimal("125.50"), "ZAR", "DEBIT",
+				"groceries", Instant.now());
+
+		mockMvc.perform(post("/api/v1/transactions")
+						.with(jwt().jwt(builder -> builder.subject(ACTOR)).authorities(new SimpleGrantedAuthority("TRANSACTION_WRITE")))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(objectMapper.writeValueAsString(request)))
+				.andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/v1/transactions")
+						.with(jwt().jwt(builder -> builder.subject(ACTOR)).authorities(new SimpleGrantedAuthority("TRANSACTION_READ")))
+						.param("customerId", customerId.toString()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.content", org.hamcrest.Matchers.hasSize(1)))
+				.andExpect(jsonPath("$.content[0].customerId").value(customerId.toString()))
+				.andExpect(jsonPath("$.content[0].merchantName").value("Checkers"))
+				.andExpect(jsonPath("$.page.totalElements").value(1));
 	}
 
 }
