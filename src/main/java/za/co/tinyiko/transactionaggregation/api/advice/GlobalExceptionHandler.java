@@ -3,6 +3,8 @@ package za.co.tinyiko.transactionaggregation.api.advice;
 import java.time.Instant;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -44,7 +46,7 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionV
  * codes this class shipped with in {@code feature/api}, before the conflict was noticed.
  * {@code RULE_NOT_FOUND} (also added in {@code feature/category-admin}) is a genuinely new code,
  * not part of SAD 39.4 - an explicit project decision, since no rule-specific not-found code is
- * documented anywhere (see CLAUDE.md). {@code feature/audit-query} adds no new code at all -
+ * documented anywhere. {@code feature/audit-query} adds no new code at all -
  * {@code AuditSearchValidationException} reuses the existing {@code REQUEST_VALIDATION_FAILED}.
  * The two
  * 401 codes ({@code AUTHENTICATION_REQUIRED}, {@code TOKEN_INVALID}) and the 403 code
@@ -73,10 +75,22 @@ import za.co.tinyiko.transactionaggregation.transaction.application.TransactionV
  * from an {@code @ExceptionHandler} method is the standard way to make
  * {@code ExceptionHandlerExceptionResolver} treat it as unresolved, so {@code DispatcherServlet}
  * propagates it back out to the servlet filter chain instead.
+ *
+ * <p><strong>Exception logging (feature/structured-logging, SAD 39: "Unexpected exceptions are
+ * logged once at the boundary"):</strong> only {@link #handleUnexpected} logs anything, at
+ * {@code ERROR}, passing the real {@link Exception} to SLF4J rather than hand-building a message -
+ * Spring Boot's structured JSON formatter serializes it into {@code error.type}/
+ * {@code error.message}/{@code error.stack_trace} natively. Every other handler in this class
+ * (expected business/validation failures - duplicates, not-found, validation, conflict) logs
+ * nothing: each already has full traceability through its {@code errorCode}/{@code correlationId}
+ * in the response and, for transaction failures, through the audit trail
+ * ({@code CreateTransactionService.recordFailure}) - logging them again here would duplicate that
+ * trail and spam low-value {@code ERROR} noise for ordinary client-driven outcomes.
  */
 @RestControllerAdvice
 class GlobalExceptionHandler {
 
+	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 	private static final String REQUEST_VALIDATION_FAILED_CODE = "REQUEST_VALIDATION_FAILED";
 
 	@ExceptionHandler(DuplicateTransactionException.class)
@@ -182,6 +196,7 @@ class GlobalExceptionHandler {
 
 	@ExceptionHandler(Exception.class)
 	ResponseEntity<ProblemDetail> handleUnexpected(Exception ex, HttpServletRequest request) {
+		log.error("Unexpected exception handling request", ex);
 		return respond(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR", "An unexpected error occurred", request);
 	}
 

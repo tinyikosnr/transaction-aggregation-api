@@ -22,8 +22,7 @@ import za.co.tinyiko.transactionaggregation.categorisation.domain.TransactionCat
  * respectively - {@code findByIds} must translate to a single SQL {@code IN (...)} query, not a
  * loop, to keep search enrichment N+1-free. {@code findAll} was added in
  * {@code feature/category-admin} for the read-only category-list admin endpoint - still no
- * {@code save}: category administration in that branch is deliberately read-only (an explicit,
- * documented project decision - see CLAUDE.md), not an oversight.
+ * {@code save}: category administration is deliberately read-only, not an oversight.
  */
 public interface CategoryRepositoryPort {
 

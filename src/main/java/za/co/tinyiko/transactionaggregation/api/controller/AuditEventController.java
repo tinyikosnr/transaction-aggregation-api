@@ -25,8 +25,7 @@ import za.co.tinyiko.transactionaggregation.audit.application.SearchAuditEventsU
 
 /**
  * Audit-event search (feature/audit-query, SAD 31.2's "operational and compliance queries" -
- * the only documented basis for this capability; see CLAUDE.md for the full list of explicit
- * project decisions this endpoint's exact contract represents). Thin: all validation,
+ * the only documented basis for this capability). Thin: all validation,
  * blank-filter normalisation, and the "{@code aggregateId} requires {@code aggregateType}" rule
  * live in {@code audit.application.SearchAuditEventsService}, not here. The only endpoint in this
  * module - no get-by-id, no write/update/delete of any kind.

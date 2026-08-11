@@ -128,7 +128,7 @@ class TransactionArchitectureTests {
 	@Test
 	void domainDoesNotReferenceFrameworkTypes() {
 		DOMAIN_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(
-				type, "org.springframework", "jakarta.persistence", "io.micrometer"));
+				type, "org.springframework", "jakarta.persistence", "io.micrometer", "org.slf4j"));
 	}
 
 	@Test
@@ -151,12 +151,16 @@ class TransactionArchitectureTests {
 	 * reflectable from this test package - the same limitation already documented for every other
 	 * package-private {@code @Service}/adapter in this codebase (e.g. {@code CreateTransactionService}
 	 * itself is not in {@code APPLICATION_TYPES} either); its own source was written to import
-	 * {@code io.micrometer.*} nowhere else in this module.
+	 * {@code io.micrometer.*} nowhere else in this module. {@code org.slf4j} is checked alongside
+	 * it since feature/structured-logging: this module's own application/port layers must stay as
+	 * free of a logging facade as they already are of Micrometer - the two approved logging call
+	 * sites (feature/structured-logging) live in {@code config}/{@code api.advice}, neither of
+	 * which is in {@code transaction} at all.
 	 */
 	@Test
-	void applicationAndPortDoNotReferenceMicrometer() {
-		APPLICATION_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(type, "io.micrometer"));
-		PORT_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(type, "io.micrometer"));
+	void applicationAndPortDoNotReferenceMicrometerOrSlf4j() {
+		APPLICATION_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(type, "io.micrometer", "org.slf4j"));
+		PORT_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(type, "io.micrometer", "org.slf4j"));
 	}
 
 }

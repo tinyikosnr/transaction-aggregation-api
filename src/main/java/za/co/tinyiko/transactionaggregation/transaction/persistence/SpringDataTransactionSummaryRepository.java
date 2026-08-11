@@ -36,7 +36,7 @@ import za.co.tinyiko.transactionaggregation.transaction.port.MerchantTotalsRow;
  * at midnight UTC on the 1st of a month was bucketed into the *previous* month, because the
  * test session's timezone put that same instant on the last day of the prior month locally.
  * {@code AT TIME ZONE 'UTC'} converts the {@code timestamptz} to a plain UTC-wall-clock
- * timestamp before truncating, matching CLAUDE.md's "treat everything internally as UTC" rule.
+ * timestamp before truncating, consistent with treating all timestamps internally as UTC.
  */
 interface SpringDataTransactionSummaryRepository extends JpaRepository<TransactionEntity, UUID> {
 

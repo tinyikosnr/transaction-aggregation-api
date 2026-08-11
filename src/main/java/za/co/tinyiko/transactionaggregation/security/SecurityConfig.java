@@ -44,9 +44,8 @@ import tools.jackson.databind.ObjectMapper;
  * entirely, so neither activates by omission - the same mechanism the old placeholder relied on).
  *
  * <p>{@code @PreAuthorize} (activated via {@link EnableMethodSecurity}) is the single source of
- * authorization truth for fine-grained authorities (SAD 36.4; CLAUDE.md's own pre-committed
- * convention, "documentation only" until now). {@code authorizeHttpRequests} below only
- * distinguishes public from authenticated - it never repeats an authority check.
+ * authorization truth for fine-grained authorities (SAD 36.4). {@code authorizeHttpRequests}
+ * below only distinguishes public from authenticated - it never repeats an authority check.
  *
  * <p>The OpenAPI/Swagger UI paths ({@code /v3/api-docs}, {@code /v3/api-docs.yaml},
  * {@code /v3/api-docs/**}, {@code /swagger-ui.html}, {@code /swagger-ui/**} - the exact set

@@ -20,9 +20,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Confirms, by scanning every compiled class under the application's base package, that OpenAPI
- * annotations ({@code io.swagger.v3.oas.annotations.*}) appear only in the two places CLAUDE.md's
- * "Where New Things Belong" table designates as the presentation boundary: {@code api.controller}/
- * {@code api.dto} (and, for the one document-root bean, {@code config}). No domain, application,
+ * annotations ({@code io.swagger.v3.oas.annotations.*}) appear only in the presentation boundary:
+ * {@code api.controller}/{@code api.dto} (and, for the one document-root bean, {@code config}).
+ * No domain, application,
  * port, or persistence class - in any module - should ever need to import a Swagger/OpenAPI type;
  * doing so would be exactly the kind of framework leak {@code FrameworkIndependenceAssertions}
  * already guards against for Spring/Jakarta Persistence types, one framework further.

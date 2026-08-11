@@ -7,7 +7,7 @@ import java.util.UUID;
  * {@code false} for the requested customer id (CUS-001). Deliberately this module's own type,
  * not {@code customer.application.CustomerNotFoundException}: each module signals its own
  * failure scenarios with its own exception types, even where another module happens to already
- * have a same-shaped one - see CLAUDE.md's "business exception" rule.
+ * have a same-shaped one.
  */
 public class CustomerNotFoundException extends RuntimeException {
 
