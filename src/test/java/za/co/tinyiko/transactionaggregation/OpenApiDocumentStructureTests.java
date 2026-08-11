@@ -1,5 +1,7 @@
 package za.co.tinyiko.transactionaggregation;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -10,6 +12,10 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -33,6 +39,9 @@ class OpenApiDocumentStructureTests {
 
 	@Autowired
 	private MockMvc mockMvc;
+
+	@Autowired
+	private ObjectMapper objectMapper;
 
 	@MockitoBean
 	private JwtDecoder jwtDecoder;
@@ -107,11 +116,25 @@ class OpenApiDocumentStructureTests {
 				.andExpect(jsonPath("$.components.schemas.AuditEventResponse.properties.eventData.type").doesNotExist());
 	}
 
+	/**
+	 * Generic, not a hard-coded per-path list (feature/health-readiness): asserts no generated
+	 * path starts with {@code /actuator/} at all, so a future actuator endpoint (liveness,
+	 * readiness, or anything added later) is covered automatically without another one-off edit
+	 * here - the same reasoning {@code OpenApiArchitectureTests} already applies at the annotation
+	 * level, extended to the generated document's own path list.
+	 */
 	@Test
-	void actuatorPathsAreNotPresentInTheGeneratedDocument() throws Exception {
-		mockMvc.perform(get("/v3/api-docs"))
+	void noGeneratedPathStartsWithActuator() throws Exception {
+		String body = mockMvc.perform(get("/v3/api-docs"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.paths['/actuator/health']").doesNotExist());
+				.andReturn().getResponse().getContentAsString();
+
+		JsonNode paths = objectMapper.readTree(body).get("paths");
+		List<String> actuatorPaths = paths.propertyNames().stream()
+				.filter(path -> path.startsWith("/actuator/"))
+				.toList();
+
+		assertThat(actuatorPaths).as("no generated OpenAPI path should start with /actuator/").isEmpty();
 	}
 
 }

@@ -70,6 +70,12 @@ import tools.jackson.databind.ObjectMapper;
  * inconsistent pattern relative to that). {@code /actuator/health} stays {@code permitAll()},
  * unchanged.
  *
+ * <p>{@code /actuator/health/liveness}/{@code /actuator/health/readiness} (feature/health-readiness,
+ * SAD 38.4/36.10) join the same {@code permitAll()} matcher as bare {@code /actuator/health} -
+ * both are orchestrator-facing probes with no legitimate reason to require a JWT, and SAD 36.10
+ * names them explicitly as publicly accessible. {@code /actuator/metrics}/{@code /actuator/prometheus}
+ * stay {@code OPERATIONS_READ}-protected, unchanged.
+ *
  * <p>The custom {@code AuthenticationEntryPoint} is registered through
  * {@code oauth2ResourceServer(oauth2 -> oauth2.authenticationEntryPoint(...))}, not the generic
  * {@code exceptionHandling(...).authenticationEntryPoint(...)} - found empirically, not assumed:
@@ -93,7 +99,8 @@ public class SecurityConfig {
 				.csrf(csrf -> csrf.disable())
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.authorizeHttpRequests(authorize -> authorize
-						.requestMatchers("/actuator/health").permitAll()
+						.requestMatchers("/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness")
+								.permitAll()
 						.requestMatchers("/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs/**",
 								"/swagger-ui.html", "/swagger-ui/**").permitAll()
 						.requestMatchers("/actuator/prometheus", "/actuator/metrics", "/actuator/metrics/**")
