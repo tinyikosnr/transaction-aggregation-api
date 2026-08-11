@@ -271,35 +271,66 @@ Each module is the only writer of its own tables. Other modules read owned data 
 
 ## Running Locally
 
-**Prerequisites:** JDK 21, Docker Desktop (for PostgreSQL and Testcontainers). Maven is not required — use the bundled wrapper.
+**Prerequisites:** JDK 21, Docker Desktop running (for PostgreSQL via Docker Compose, and for Testcontainers when running tests). Maven is not required — use the bundled wrapper.
 
 ```bash
 # 1. Clone the repository
-git clone <repository-url>
+git clone https://github.com/tinyikosnr/transaction-aggregation-api.git
 cd transaction-aggregation-api
 
-# 2. Run the application
-./mvnw spring-boot:run          # Linux/macOS
-mvnw.cmd spring-boot:run        # Windows
+# 2. Run the application under the local profile
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local          # Linux/macOS
+```
+```powershell
+mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"      # Windows PowerShell
 ```
 
-Because `spring-boot-docker-compose` is on the classpath, Spring Boot will automatically start and stop the PostgreSQL container defined in `compose.yaml` when the application starts and stops — a manual `docker compose up` is only needed if you want the database running independently of the app (e.g. to inspect it directly).
+The `local` profile is the standard way to run this application for review or development: it activates a local-only JWT decoder so the app starts without a real identity provider. **The `local` profile is required for the simplest first run** — production JWT configuration deliberately requires `JWT_ISSUER_URI` to be set (see [Security](#security)), and the plain `spring-boot:run` command with no profile will fail to start with an unresolved-placeholder error until either `JWT_ISSUER_URI` is supplied or `local` is activated as shown above.
 
-The application starts on the default port `8080` under the `transaction-aggregation-api` application name. **The application will fail to start unless `JWT_ISSUER_URI` is set** (or the `local` profile is active) — see [Security](#security) for the local-development JWT setup.
+The application starts on port `8080` under the `transaction-aggregation-api` application name. Because `spring-boot-docker-compose` is on the classpath, Spring Boot automatically starts the PostgreSQL container defined in `compose.yaml` before connecting, waits for it to become healthy, then runs Flyway migrations — no manual Docker Compose step is needed (see [Docker](#docker)).
+
+**Verify it started successfully:**
+```bash
+curl http://localhost:8080/actuator/health
+```
+```json
+{"groups":["liveness","readiness"],"status":"UP"}
+```
+This endpoint is public and does not require a JWT.
+
+**Explore the API** (enabled under the `local` profile):
+- Swagger UI: <http://localhost:8080/swagger-ui.html> (redirects to <http://localhost:8080/swagger-ui/index.html>)
+- OpenAPI JSON: <http://localhost:8080/v3/api-docs>
+- OpenAPI YAML: <http://localhost:8080/v3/api-docs.yaml>
+
+All business API endpoints are protected and require a bearer JWT. See the [Security → Local development](#security) section for how to create a local token using the local-only signing key.
 
 ## Docker
 
+Manual Docker Compose commands are **not** required for ordinary local startup. Docker Desktop only needs to be running:
+
+1. Spring Boot Docker Compose (`spring-boot-docker-compose` on the classpath) automatically starts the PostgreSQL service defined in `compose.yaml` when the application starts.
+2. Spring Boot waits for that container to report healthy before connecting.
+3. Flyway then runs its migrations against it.
+4. A normal application shutdown stops the compose-managed PostgreSQL container automatically.
+
 `compose.yaml` defines a single local development service:
 
-```yaml
-postgres: postgres:latest, database "mydatabase", user "myuser"
-```
+| Setting | Value |
+|---|---|
+| Image | `postgres:latest` |
+| Database | `mydatabase` |
+| Username | `myuser` |
+| Password | `secret` |
+| Container port | `5432` |
+| Host port | dynamically assigned by Docker |
 
-These credentials are **local-development placeholders only** and must never be reused in a shared or production environment — see [Security](#security). A production application image (multi-stage Dockerfile) is planned per [Part 6A – Operations, 43](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6A_Operations.md) but is not yet present in this repository.
+These credentials are **local-development placeholders only** and must never be reused in a shared or production environment — see [Security](#security). `postgres:latest` is a floating tag and therefore does not guarantee the same PostgreSQL version over time. A production application image (multi-stage Dockerfile) is planned per [Part 6A – Operations, 43](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6A_Operations.md) but is not yet present in this repository.
 
+**Manual / optional** — only needed to run PostgreSQL independently of the application, e.g. to inspect data directly with `psql` while the app itself is stopped:
 ```bash
-docker compose up      # start PostgreSQL
-docker compose down    # stop and remove the container
+docker compose up      # start PostgreSQL on its own
+docker compose down    # stop and remove it
 ```
 
 ## Flyway
@@ -328,6 +359,7 @@ Applied migrations are immutable; schema changes are always additive new migrati
 ./mvnw test       # unit + integration tests (starts Testcontainers PostgreSQL — Docker must be running)
 ./mvnw verify      # full build-verification lifecycle
 ```
+On Windows: `mvnw.cmd test` / `mvnw.cmd verify` — same requirements, Docker Desktop must be running.
 
 The test stack uses JUnit 5, Mockito, Spring Boot Test (including `@WebMvcTest` slices for controllers, mocking the use-case layer — no database needed there), Spring Security Test (`jwt()` `MockMvc` request post-processor — no real signed token or identity provider needed in any test), Spring Modulith's test starter (module boundary verification), and Testcontainers for real PostgreSQL integration tests — no mocked database in repository-layer tests. One `@SpringBootTest` test class (`CreateTransactionEndToEndTests`) exercises the full real stack (real Postgres, real correlation-ID filter, real JWT-secured filter chain, real controller, real persistence) for the create-transaction happy path, including asserting the JWT subject reaches the persisted audit row, plus a bulk-create scenario asserting a mixed-outcome `207` response and that both the created and duplicate-rejected items produce their expected audit rows — to catch wiring mistakes a mocked-use-case slice test cannot. A second class, `CategoryAdminEndToEndTests`, proves a category-admin write is genuinely visible to runtime categorisation: create a rule through the real admin API, then submit a real transaction and assert it was categorised by that new rule; a second scenario deactivates a rule and confirms the next transaction no longer matches it. `JpaCategorisationRuleRepositoryAdapterConcurrencyTests` is a dedicated, non-`@Transactional` (`Propagation.NOT_SUPPORTED`) persistence test proving the optimistic-lock guarantee against two genuinely independent, separately-committing calls, not two calls sharing one rolled-back test transaction. A third class, `AuditQueryEndToEndTests`, proves audit search is genuinely visible against real audit rows: submit a real transaction, then query `GET /api/v1/audit-events` by `correlationId` and by `aggregateType`/`aggregateId` and confirm the `TRANSACTION_CREATED` event is returned; a second scenario submits a duplicate and confirms `TRANSACTION_DUPLICATE_REJECTED` is discoverable the same way — no artificial direct-insert audit row is ever created. `AuditEventApiMapperTests` proves `eventData` serializes as real nested JSON rather than a double-encoded string. `ObservabilityEndToEndTests` proves the observability stack end-to-end against the real `MeterRegistry` bean: `/actuator/health` unchanged and public, `/actuator/prometheus`/`/actuator/metrics` requiring `OPERATIONS_READ` (401 unauthenticated, 403 wrong authority, 200 otherwise), a real transaction request incrementing `transactions.received`/`transactions.processed` by exactly one (before/after deltas, since the Spring context and its registry are shared across test methods), a real duplicate incrementing `transactions.duplicates` and not the generic `rejected` counter, and the scraped Prometheus text body containing both built-in and custom exported metric names. `MicrometerTransactionMetricsTests` uses a plain `SimpleMeterRegistry` (no Spring context) to prove the cardinality-safety policy directly: every meter's tags are swept for forbidden high-cardinality keys, and the `reason` tag on `transactions.rejected` is confirmed bounded to exactly the three `RejectionReason` values. `HealthReadinessEndToEndTests` proves the normal-state and security behaviour of the health/readiness endpoints against the shared Testcontainers PostgreSQL instance: `/actuator/health`/`/actuator/health/liveness`/`/actuator/health/readiness` all public and `UP`, readiness responses carrying no component detail, and metrics/Prometheus security unchanged by the new matchers. `HealthReadinessOutageRecoveryTests` is a separate, dedicated class (a genuinely different infrastructure topology, not reused from the shared suite container) that provisions its own isolated PostgreSQL container fronted by a Toxiproxy proxy on their own `Network`, routes the Spring context's real `DataSource` through that proxy from context startup, and empirically proves all three states against the same running context: reachable (liveness/readiness both `UP`), interrupted via `Proxy.disable()` (liveness stays `UP`, readiness `503`), and restored via `Proxy.enable()` (readiness returns to `UP`, using a small bounded retry since HikariCP's own pool-recovery discovery is asynchronous) — see [Health & Readiness](#health--readiness) for the full mechanism-selection reasoning. `StructuredLoggingEndToEndTests` drives real requests through the real filter chain and captures the real `ILoggingEvent`, encoded through the exact `CONSOLE` appender's encoder Spring Boot itself configured for `logging.structured.format.console=ecs` (not a `System.out` swap, which Logback's `ConsoleAppender` captures a reference to before a test could redirect it) — proving valid ECS JSON, correct `correlationId`/method/status/duration/route fields, the generated-id-matches-response-header case, and that a supplied bearer token never appears in the captured line. `CorrelationIdFilterTests` additionally proves the access-log event's field shape, `http.route` inclusion/omission (a matched Spring MVC route template only, never the raw request URI), and that a second, header-less request never inherits a prior request's correlation id. `GlobalExceptionHandlerTests` additionally proves the unexpected-exception path logs exactly one `ERROR` event carrying the real `Throwable`, while an expected business exception (e.g. a duplicate transaction) logs nothing — see [Structured Logging](#structured-logging) for the full design. Every `@SpringBootTest`/`@WebMvcTest` that loads `security.SecurityConfig` mocks the `JwtDecoder` bean (`@MockitoBean`) purely to avoid a startup-time network call or a real issuer dependency — actual authentication in tests is driven by `jwt()`, not the decoder. Testcontainers-based tests provision their own PostgreSQL container via `TestcontainersConfiguration` and do not depend on, or interact with, the `compose.yaml` database described under [Docker](#docker) — the two are independent container lifecycles, and Docker must be running for either. The testing pyramid, required test types per layer, and the required test list are defined in [Part 6A – Operations, 45](documentation/Solution_Architecture_Document%28SAD%29_v_2_Part_6A_Operations.md) and [TDS 70](documentation/Transaction_Aggregation_API_Technical_Design_Specification.md#70-recommended-first-implementation-slice).
 
