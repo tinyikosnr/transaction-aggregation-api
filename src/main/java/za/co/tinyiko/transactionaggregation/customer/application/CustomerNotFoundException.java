@@ -4,8 +4,8 @@ import za.co.tinyiko.transactionaggregation.customer.domain.CustomerId;
 
 /**
  * Thrown by {@link CustomerLookupPort#getRequired(CustomerId)} when no customer exists with
- * the given id. Standalone for now (not extending a shared base) — see {@code CLAUDE.md} for
- * why: a shared exception base has no genuine cross-module consumer yet.
+ * the given id. Standalone (not extending a shared base): a shared exception base has no
+ * genuine cross-module consumer yet.
  */
 public class CustomerNotFoundException extends RuntimeException {
 

@@ -42,9 +42,9 @@ import za.co.tinyiko.transactionaggregation.categorisation.application.UpdateCat
  * Category and categorisation-rule administration (feature/category-admin, TDS 54's named
  * {@code CategoryAdminController}). The exact scope here - category reads only, full rule
  * create/update, no deletion anywhere - is an explicit project resolution of an incomplete
- * SAD/TDS contract, not something fully specified by the documentation; see CLAUDE.md for the
- * detailed reasoning. Every endpoint requires {@code CATEGORY_ADMIN}. Thin, like every other
- * controller: all validation, category-reference checking, and optimistic-lock handling lives in
+ * SAD/TDS contract, not something fully specified by the documentation. Every endpoint
+ * requires {@code CATEGORY_ADMIN}. Thin, like every other controller: all validation,
+ * category-reference checking, and optimistic-lock handling lives in
  * {@code categorisation.application}, not here.
  */
 @RestController

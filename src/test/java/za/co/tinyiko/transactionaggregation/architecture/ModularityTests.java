@@ -23,11 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p><strong>Not covered here:</strong> whether {@code domain} packages avoid depending on
  * Spring, Jakarta Persistence or presentation types. That is an intra-module layering rule,
- * not a cross-module boundary rule, and Spring Modulith's verification does not check it. No
- * {@code domain} package contains a class yet, so there is nothing to enforce. This is a
- * deliberate, deferred decision (see {@code CLAUDE.md}) — revisit with ArchUnit, or an
- * equivalent check, once the first domain model is implemented, rather than adding a
- * dependency with nothing to verify yet.
+ * not a cross-module boundary rule, and Spring Modulith's verification does not check it -
+ * each module's own {@code <Module>ArchitectureTests} class covers that instead, via
+ * {@link FrameworkIndependenceAssertions}.
  */
 class ModularityTests {
 

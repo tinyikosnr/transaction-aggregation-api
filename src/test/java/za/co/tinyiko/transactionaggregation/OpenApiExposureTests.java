@@ -15,8 +15,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Confirms the local-vs-default OpenAPI/Swagger UI exposure decision (CLAUDE.md, corrected plan
- * point B.2): both {@code /v3/api-docs} and Swagger UI are disabled under the default profile
+ * Confirms the local-vs-default OpenAPI/Swagger UI exposure decision: both {@code /v3/api-docs}
+ * and Swagger UI are disabled under the default profile
  * (matching {@code application.properties}) and enabled under {@code local}
  * ({@code application-local.properties}), driven entirely by {@code springdoc.api-docs.enabled}/
  * {@code springdoc.swagger-ui.enabled} - not by this test overriding either property. Security

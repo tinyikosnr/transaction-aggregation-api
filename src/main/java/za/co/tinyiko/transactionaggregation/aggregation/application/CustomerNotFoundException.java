@@ -7,7 +7,7 @@ import java.util.UUID;
  * {@code false} for the requested customer id (TDS 40's {@code CUS-001}, reused conceptually).
  * Deliberately this module's own type, not {@code customer.application}'s or
  * {@code transaction.application}'s - each module signals its own failure scenarios with its
- * own exception types, per CLAUDE.md's established "business exception" rule.
+ * own exception types.
  */
 public class CustomerNotFoundException extends RuntimeException {
 

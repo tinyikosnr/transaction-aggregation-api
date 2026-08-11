@@ -77,8 +77,7 @@ class ApiArchitectureTests {
 	/**
 	 * {@code jakarta.validation} is deliberately not in the forbidden list here - Bean
 	 * Validation annotations on a request DTO are the one framework dependency this layer is
-	 * expected to carry (CLAUDE.md: "DTO-level validation | Jakarta Bean Validation annotations
-	 * on api.request types").
+	 * expected to carry: DTO-level validation belongs directly on {@code api.request} types.
 	 */
 	@Test
 	void requestDtosDoNotReferenceDomainOrPersistenceTypes() {

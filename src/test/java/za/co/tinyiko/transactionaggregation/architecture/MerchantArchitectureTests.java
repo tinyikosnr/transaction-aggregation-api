@@ -36,7 +36,7 @@ class MerchantArchitectureTests {
 	@Test
 	void domainDoesNotReferenceFrameworkTypes() {
 		DOMAIN_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(
-				type, "org.springframework", "jakarta.persistence"));
+				type, "org.springframework", "jakarta.persistence", "org.slf4j"));
 	}
 
 	@Test

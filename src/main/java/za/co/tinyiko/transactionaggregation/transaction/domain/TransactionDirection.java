@@ -5,8 +5,8 @@ package za.co.tinyiko.transactionaggregation.transaction.domain;
  * {@code categorisation.domain.Direction} - the two enums share identical constant names and
  * are connected only by an explicit {@code name()} string crossing the module boundary (see
  * {@code CreateTransactionService}), not a shared type. Promoting either to {@code shared} was
- * considered and rejected: see CLAUDE.md's "sharing a concept across two modules is not, by
- * itself, a reason to promote it" rule.
+ * considered and rejected: sharing a concept across two modules is not, by itself, a reason to
+ * promote it into a shared type.
  */
 public enum TransactionDirection {
 

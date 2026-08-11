@@ -30,7 +30,7 @@ import za.co.tinyiko.transactionaggregation.customer.domain.CustomerStatus;
  * <p>Still no ArchUnit: this is a direct, proportionate extension of the same hand-rolled
  * reflection check already used for {@code shared} — two rules, six known classes. Revisit
  * ArchUnit if this keeps growing across modules to the point of real duplication, or if a rule
- * comes up that reflection can't express cleanly (see {@code CLAUDE.md}).
+ * comes up that reflection can't express cleanly.
  */
 class CustomerArchitectureTests {
 
@@ -52,7 +52,7 @@ class CustomerArchitectureTests {
 	@Test
 	void domainDoesNotReferenceFrameworkTypes() {
 		DOMAIN_TYPES.forEach(type -> FrameworkIndependenceAssertions.assertNoForbiddenReference(
-				type, "org.springframework", "jakarta.persistence"));
+				type, "org.springframework", "jakarta.persistence", "org.slf4j"));
 	}
 
 	@Test

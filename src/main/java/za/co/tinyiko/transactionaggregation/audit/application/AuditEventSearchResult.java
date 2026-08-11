@@ -10,7 +10,7 @@ import java.util.List;
  * duplicated fields was considered and rejected: it would force real, unforced churn onto a
  * working `transaction` contract for a marginal DRY gain, and would give `audit` a reason to
  * reach outside its own module for something this simple - the smallest-coupling option is for
- * each module to own its own small paging result. See CLAUDE.md for the full reasoning.
+ * each module to own its own small paging result.
  */
 public record AuditEventSearchResult(List<AuditEventView> content, int page, int size, long totalElements, int totalPages) {
 }

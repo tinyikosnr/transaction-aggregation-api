@@ -3,11 +3,17 @@ package za.co.tinyiko.transactionaggregation.api.advice;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 import za.co.tinyiko.transactionaggregation.categorisation.application.CategoryNotFoundException;
 import za.co.tinyiko.transactionaggregation.shared.logging.CorrelationId;
@@ -136,6 +142,63 @@ class GlobalExceptionHandlerTests {
 				new CategoryNotFoundException(UUID.randomUUID()), new MockHttpServletRequest());
 
 		assertThat(response.getBody().getProperties()).doesNotContainKey("correlationId");
+	}
+
+	/**
+	 * SAD 39: "Unexpected exceptions are logged once at the boundary." Asserts exactly one
+	 * {@code ERROR} event, carrying the real {@link Throwable} (not a hand-built string) so the
+	 * structured JSON formatter can serialize {@code error.type}/{@code error.message}/
+	 * {@code error.stack_trace} natively.
+	 */
+	@Test
+	void logsExactlyOneErrorEventWithTheThrowableAttachedForAnUnexpectedException() {
+		ListAppender<ILoggingEvent> appender = attachTestAppender();
+		try {
+			RuntimeException thrown = new RuntimeException("some internal implementation detail");
+
+			handler.handleUnexpected(thrown, requestWithCorrelationId());
+
+			assertThat(appender.list).hasSize(1);
+			ILoggingEvent event = appender.list.get(0);
+			assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+			assertThat(event.getThrowableProxy().getClassName()).isEqualTo(RuntimeException.class.getName());
+			assertThat(event.getThrowableProxy().getMessage()).isEqualTo("some internal implementation detail");
+		} finally {
+			detachTestAppender(appender);
+		}
+	}
+
+	/**
+	 * Expected business/validation failures (4xx) already have full traceability through their
+	 * {@code errorCode}/{@code correlationId} and, where applicable, the audit trail - logging them
+	 * again here would duplicate that trail and spam {@code ERROR}-level noise for ordinary,
+	 * client-driven outcomes.
+	 */
+	@Test
+	void doesNotLogAnythingForAnExpectedBusinessException() {
+		ListAppender<ILoggingEvent> appender = attachTestAppender();
+		try {
+			handler.handleDuplicateTransaction(
+					new DuplicateTransactionException(UUID.randomUUID(), "EXT-001"), requestWithCorrelationId());
+
+			assertThat(appender.list).isEmpty();
+		} finally {
+			detachTestAppender(appender);
+		}
+	}
+
+	private static ListAppender<ILoggingEvent> attachTestAppender() {
+		Logger logbackLogger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logbackLogger.addAppender(appender);
+		return appender;
+	}
+
+	private static void detachTestAppender(ListAppender<ILoggingEvent> appender) {
+		Logger logbackLogger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+		logbackLogger.detachAppender(appender);
+		appender.stop();
 	}
 
 }

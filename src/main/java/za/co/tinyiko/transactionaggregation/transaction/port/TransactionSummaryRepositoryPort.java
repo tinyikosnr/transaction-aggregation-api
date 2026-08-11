@@ -17,7 +17,7 @@ import java.util.UUID;
  * keeping the port itself a plain "given these exact instants, aggregate these rows" contract.
  *
  * <p>All aggregation happens in SQL (via the adapter's JPQL queries), not by loading transactions
- * into memory - see CLAUDE.md's persistence/query strategy notes.
+ * into memory.
  */
 public interface TransactionSummaryRepositoryPort {
 

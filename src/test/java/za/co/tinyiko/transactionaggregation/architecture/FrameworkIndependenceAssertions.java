@@ -15,7 +15,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * package. Not ArchUnit: Spring Modulith's {@code ApplicationModules.verify()} only checks
  * cross-module boundaries, not whether a class imports a particular framework package, so this
  * fills that one gap. Proportionate while the set of types needing this check stays small and
- * simple — see {@code CLAUDE.md} for when to reconsider ArchUnit instead.
+ * simple; reconsider ArchUnit if the checked type set grows significantly or a rule needs
+ * real call-graph or package-cycle analysis this reflection-based approach can't express.
  */
 final class FrameworkIndependenceAssertions {
 
